@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Real credentials - never commit this. Copy .env.example to .env instead.
+.env
+
+# Cached OANDA candle history - regenerable via data_fetch.py, and large
+# (tens of MB across 4 instruments x 2 timeframes x years of 1H data).
+data_cache/

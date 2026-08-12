@@ -1,0 +1,4 @@
+pandas
+numpy
+oandapyV20
+python-dotenv
