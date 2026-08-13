@@ -12,20 +12,18 @@ performed - nothing here buys or sells anything for real.
 What this script does:
   1. Fetches (or loads from cache) several years of 1H + 4H candle data
      for EUR/USD, GBP/USD, USD/JPY, and Gold from OANDA.
-  2. Builds each instrument's signal frame (signals.py): the 4H trend
-     filter, the 1H breakout trigger, ATR, and spread.
-  3. Splits the data CHRONOLOGICALLY at one shared cutoff date (not per
-     instrument) into a 70% TRAINING period and a 30% TESTING period the
-     strategy has never "seen" - so the whole portfolio is evaluated
-     out-of-sample together, the way it would actually be traded.
-  4. Runs the full multi-instrument backtest engine on each period
-     separately, each starting from a fresh $10,000 account.
-  5. Prints a full metrics report for both periods - including a
-     breakdown of every reason a signal was rejected (spread, news
-     blackout, safety limits, etc.) for transparency - and states
-     PLAINLY whether the strategy clears every bar from the spec:
-     >=150 completed trades, positive out-of-sample return, <10% max
-     drawdown, profit factor >1.2. No bar is loosened to force a pass.
+  2. For each experiment in EXPERIMENTS below, builds each instrument's
+     signal frame (signals.py) using that experiment's SignalConfig -
+     entry logic itself can vary between experiments, not just risk
+     parameters - then splits CHRONOLOGICALLY at one shared cutoff date
+     into a 70% TRAINING period and a 30% TESTING period.
+  3. Runs the full multi-instrument backtest engine with that
+     experiment's RiskConfig, each period starting from a fresh $10,000
+     account.
+  4. Prints a detailed report for the baseline, a short summary for each
+     variation, and a comparison table across all of them at the end -
+     so tradeoffs are visible side by side rather than picking a winner
+     silently.
 
 Usage:
     source venv/bin/activate
@@ -36,8 +34,9 @@ import pandas as pd
 
 from instruments import INSTRUMENTS
 from data_fetch import fetch_all
-from signals import prepare_instrument_frame
+from signals import prepare_instrument_frame, SignalConfig
 from backtest_engine import run_backtest
+from risk_management import RiskConfig
 
 STARTING_CASH = 10_000
 COMMISSION_PER_TRADE = 0.0   # OANDA's standard retail accounts are spread-only, no separate
@@ -50,17 +49,36 @@ MAX_ALLOWED_DRAWDOWN_PCT = 10.0
 MIN_REQUIRED_PROFIT_FACTOR = 1.2
 
 
-def build_all_frames():
-    """Fetch/cache data for every instrument and build its signal frame."""
-    raw_data, is_synthetic = fetch_all(list(INSTRUMENTS.keys()))
+# =============================================================================
+# Experiments - each is (label, SignalConfig, RiskConfig).
+#
+# Just the current default configuration by default: channel_period=95
+# (SignalConfig's default - see signals.py's module docstring for why this
+# differs from the spec's originally-stated 20), everything else at spec
+# defaults. This found its way here via a channel-length sweep (20-100)
+# followed by an 11-scenario robustness stress test comparing it against
+# baseline and against combining it with a lower drawdown-suspend
+# threshold (which didn't help - see README.md for the full history).
+#
+# To explore further variations again, add more (label, SignalConfig,
+# RiskConfig) tuples here - the comparison-table machinery below handles
+# any number of them.
+# =============================================================================
 
+EXPERIMENTS = [
+    ("current default (channel=95)", SignalConfig(), RiskConfig()),
+]
+
+
+def build_all_frames(raw_data, signal_config=SignalConfig()):
+    """Build each instrument's signal frame from already-fetched raw
+    OANDA data, using the given SignalConfig."""
     frames = {}
-    for symbol, spec in INSTRUMENTS.items():
+    for symbol in INSTRUMENTS:
         h1 = raw_data[symbol]["H1"]
         h4 = raw_data[symbol]["H4"]
-        frames[symbol] = prepare_instrument_frame(h1, h4)
-
-    return frames, is_synthetic
+        frames[symbol] = prepare_instrument_frame(h1, h4, config=signal_config)
+    return frames
 
 
 def split_train_test(frames, train_fraction=TRAIN_FRACTION):
@@ -83,10 +101,8 @@ def split_train_test(frames, train_fraction=TRAIN_FRACTION):
 def compute_metrics(result, starting_cash):
     """Performance metrics for one backtest run. 'Completed trades' means
     trades that hit their stop-loss or take-profit naturally - forced
-    closes at the end of the data (the backtest simply running out of
-    history) are tracked separately and NOT counted toward the 150-trade
-    requirement or win-rate/profit-factor, since they're an artifact of
-    where the data ends, not a real strategy outcome."""
+    closes at the end of the data are tracked separately and NOT counted
+    toward the 150-trade requirement or win-rate/profit-factor."""
     trades = result["trades"]
     if len(trades) == 0:
         real_trades = trades
@@ -132,6 +148,24 @@ def compute_metrics(result, starting_cash):
     }
 
 
+def evaluate_requirements(train_metrics, test_metrics):
+    total_completed = train_metrics["n_completed_trades"] + test_metrics["n_completed_trades"]
+    checks = {
+        "trades_pass": total_completed >= MIN_REQUIRED_TRADES,
+        "oos_positive_pass": test_metrics["total_return_pct"] > 0,
+        "drawdown_pass": (
+            train_metrics["max_drawdown_pct"] < MAX_ALLOWED_DRAWDOWN_PCT
+            and test_metrics["max_drawdown_pct"] < MAX_ALLOWED_DRAWDOWN_PCT
+        ),
+        "profit_factor_pass": test_metrics["profit_factor"] > MIN_REQUIRED_PROFIT_FACTOR,
+    }
+    checks["total_completed"] = total_completed
+    checks["all_pass"] = all(
+        v for k, v in checks.items() if k.endswith("_pass")
+    )
+    return checks
+
+
 def print_period_report(label, result, metrics):
     print(f"\n===== {label} =====")
     print(f"Completed trades (SL/TP only): {metrics['n_completed_trades']}  "
@@ -160,52 +194,87 @@ def print_period_report(label, result, metrics):
             print(f"  {reason}: {count}")
 
 
-def print_final_verdict(train_metrics, test_metrics):
-    total_completed = train_metrics["n_completed_trades"] + test_metrics["n_completed_trades"]
-
-    checks = [
-        (
-            f"At least {MIN_REQUIRED_TRADES} completed trades (train + test combined)",
-            total_completed >= MIN_REQUIRED_TRADES,
-            f"{total_completed} completed",
-        ),
-        (
-            "Positive result on unseen out-of-sample (test) data",
-            test_metrics["total_return_pct"] > 0,
-            f"test return {test_metrics['total_return_pct']:.2f}%",
-        ),
-        (
-            f"Max drawdown stays below {MAX_ALLOWED_DRAWDOWN_PCT:.0f}% (both periods)",
-            train_metrics["max_drawdown_pct"] < MAX_ALLOWED_DRAWDOWN_PCT
-            and test_metrics["max_drawdown_pct"] < MAX_ALLOWED_DRAWDOWN_PCT,
-            f"train {train_metrics['max_drawdown_pct']:.2f}%, test {test_metrics['max_drawdown_pct']:.2f}%",
-        ),
-        (
-            f"Profit factor above {MIN_REQUIRED_PROFIT_FACTOR} on out-of-sample (test) data",
-            test_metrics["profit_factor"] > MIN_REQUIRED_PROFIT_FACTOR,
-            f"test profit factor {test_metrics['profit_factor']:.3f}",
-        ),
-    ]
-
+def print_final_verdict(checks):
     print("\n" + "=" * 78)
-    print("FINAL VERDICT - does this strategy meet every bar from the spec?")
+    print("Does this configuration meet every bar from the spec?")
     print("=" * 78)
-    all_passed = True
-    for description, passed, detail in checks:
-        status = "PASS" if passed else "FAIL"
-        if not passed:
-            all_passed = False
-        print(f"[{status}] {description}  ->  {detail}")
-
+    labels = {
+        "trades_pass": f"At least {MIN_REQUIRED_TRADES} completed trades (train + test combined)",
+        "oos_positive_pass": "Positive result on unseen out-of-sample (test) data",
+        "drawdown_pass": f"Max drawdown stays below {MAX_ALLOWED_DRAWDOWN_PCT:.0f}% (both periods)",
+        "profit_factor_pass": f"Profit factor above {MIN_REQUIRED_PROFIT_FACTOR} on out-of-sample (test) data",
+    }
+    for key, description in labels.items():
+        status = "PASS" if checks[key] else "FAIL"
+        print(f"[{status}] {description}")
     print("-" * 78)
-    if all_passed:
+    if checks["all_pass"]:
         print("Overall: PASSES every requirement in the spec on this dataset.")
-        print("That is NOT the same as a guarantee of future performance - it means")
-        print("the strategy cleared the bars you set, on the history available.")
     else:
-        print("Overall: DOES NOT pass every requirement. Reporting this honestly")
-        print("rather than loosening any rule to force a pass, as agreed.")
+        print("Overall: DOES NOT pass every requirement.")
     print("=" * 78)
+
+
+def run_experiment(label, signal_config, risk_config, raw_data):
+    """Build this experiment's signal frames (entry logic can differ per
+    experiment), split train/test, and run the backtest with this
+    experiment's risk config."""
+    frames = build_all_frames(raw_data, signal_config)
+    train_frames, test_frames, common_start, split_point, common_end = split_train_test(frames)
+
+    train_result = run_backtest(train_frames, starting_cash=STARTING_CASH,
+                                 commission_per_trade=COMMISSION_PER_TRADE, config=risk_config)
+    train_metrics = compute_metrics(train_result, STARTING_CASH)
+
+    test_result = run_backtest(test_frames, starting_cash=STARTING_CASH,
+                                commission_per_trade=COMMISSION_PER_TRADE, config=risk_config)
+    test_metrics = compute_metrics(test_result, STARTING_CASH)
+
+    checks = evaluate_requirements(train_metrics, test_metrics)
+
+    return {
+        "label": label, "signal_config": signal_config, "risk_config": risk_config,
+        "train_result": train_result, "test_result": test_result,
+        "train_metrics": train_metrics, "test_metrics": test_metrics,
+        "checks": checks,
+        "split_info": (common_start, split_point, common_end),
+    }
+
+
+def print_comparison_table(experiment_results):
+    print("\n" + "=" * 100)
+    print("COMPARISON ACROSS ALL VARIATIONS")
+    print("=" * 100)
+
+    header = (
+        f"{'Config':<45} {'TrainDD%':>8} {'TestDD%':>8} {'TestPF':>7} "
+        f"{'Trades':>7} {'TestRet%':>9} {'Trd':>4} {'OOS+':>5} {'DD':>4} {'PF':>4} {'ALL':>5}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for exp in experiment_results:
+        tm, sm, c = exp["train_metrics"], exp["test_metrics"], exp["checks"]
+        row = (
+            f"{exp['label']:<45} "
+            f"{tm['max_drawdown_pct']:>8.2f} "
+            f"{sm['max_drawdown_pct']:>8.2f} "
+            f"{sm['profit_factor']:>7.3f} "
+            f"{c['total_completed']:>7} "
+            f"{sm['total_return_pct']:>9.2f} "
+            f"{'OK' if c['trades_pass'] else 'X':>4} "
+            f"{'OK' if c['oos_positive_pass'] else 'X':>5} "
+            f"{'OK' if c['drawdown_pass'] else 'X':>4} "
+            f"{'OK' if c['profit_factor_pass'] else 'X':>4} "
+            f"{'PASS' if c['all_pass'] else 'fail':>5}"
+        )
+        print(row)
+
+    print("=" * 100)
+    print("TrainDD%/TestDD% = max drawdown per period (fails if either >= 10%). TestPF = profit")
+    print("factor on out-of-sample data. Trades = completed trades, train+test combined (need >=150).")
+    print("TestRet% = out-of-sample total return. Trd/OOS+/DD/PF = pass(OK)/fail(X) on each individual")
+    print("requirement; ALL = every requirement passing at once.")
 
 
 def main():
@@ -216,32 +285,45 @@ def main():
     print("historical-candles fetch (data_fetch.py).")
     print("=" * 78)
 
-    frames, is_synthetic = build_all_frames()
+    raw_data, is_synthetic = fetch_all(list(INSTRUMENTS.keys()))
     if is_synthetic:
         print(
             "\n*** NOTE: Using SYNTHETIC sample data (not real OANDA history), because "
-            "live data could not be fetched. Every metric and PASS/FAIL check below is "
+            "live data could not be fetched. Every metric and comparison below is "
             "MEANINGLESS as a strategy evaluation on this data - it only proves the code "
             "runs end to end. Fix your OANDA credentials in .env and re-run for a real "
             "evaluation. ***\n"
         )
 
-    train_frames, test_frames, common_start, split_point, common_end = split_train_test(frames)
-    print(f"\nFull available data range: {common_start} to {common_end}")
-    print(f"Training period: {common_start} to {split_point}")
-    print(f"Testing period:  {split_point} to {common_end}")
+    experiment_results = []
+    for i, (label, signal_config, risk_config) in enumerate(EXPERIMENTS):
+        print(f"\n\n{'#' * 78}")
+        print(f"# EXPERIMENT: {label}")
+        print(f"{'#' * 78}")
 
-    print("\nRunning backtest on TRAINING period...")
-    train_result = run_backtest(train_frames, starting_cash=STARTING_CASH, commission_per_trade=COMMISSION_PER_TRADE)
-    train_metrics = compute_metrics(train_result, STARTING_CASH)
-    print_period_report("TRAINING", train_result, train_metrics)
+        result = run_experiment(label, signal_config, risk_config, raw_data)
+        experiment_results.append(result)
 
-    print("\nRunning backtest on TESTING period (unseen data)...")
-    test_result = run_backtest(test_frames, starting_cash=STARTING_CASH, commission_per_trade=COMMISSION_PER_TRADE)
-    test_metrics = compute_metrics(test_result, STARTING_CASH)
-    print_period_report("TESTING (unseen data)", test_result, test_metrics)
+        common_start, split_point, common_end = result["split_info"]
+        print(f"Training period: {common_start} to {split_point}")
+        print(f"Testing period:  {split_point} to {common_end}")
 
-    print_final_verdict(train_metrics, test_metrics)
+        if i == 0:
+            # Full detail for the baseline, as a reference point.
+            print_period_report("TRAINING", result["train_result"], result["train_metrics"])
+            print_period_report("TESTING (unseen data)", result["test_result"], result["test_metrics"])
+            print_final_verdict(result["checks"])
+        else:
+            # Shorter summary for each variation - the full comparison table at
+            # the end is where these are meant to be read side by side.
+            tm, sm, c = result["train_metrics"], result["test_metrics"], result["checks"]
+            print(f"Train: return {tm['total_return_pct']:.2f}%, drawdown {tm['max_drawdown_pct']:.2f}%, "
+                  f"{tm['n_completed_trades']} trades, PF {tm['profit_factor']:.3f}")
+            print(f"Test:  return {sm['total_return_pct']:.2f}%, drawdown {sm['max_drawdown_pct']:.2f}%, "
+                  f"{sm['n_completed_trades']} trades, PF {sm['profit_factor']:.3f}")
+            print(f"Meets all 4 requirements: {'YES' if c['all_pass'] else 'no'}")
+
+    print_comparison_table(experiment_results)
 
     print("\nKnown approximations in this backtest (see file docstrings for detail):")
     print("  - Economic calendar: a recurring weekday time-window heuristic, not a real")

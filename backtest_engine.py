@@ -37,14 +37,13 @@ Execution model (confirmed with the user before building this):
     orders reacting to price crossing a level).
 """
 
-import datetime as dt
 import pandas as pd
 
 from instruments import INSTRUMENTS, value_per_price_unit
 from risk_management import (
     PortfolioAccount, calculate_stop_and_target, calculate_position_size,
     spread_is_acceptable, data_is_stale, near_economic_announcement,
-    TAKE_PROFIT_ATR_MULTIPLE,
+    DEFAULT_CONFIG,
 )
 
 # Overnight financing "rollover" hour, in UTC. Real brokers roll over at
@@ -79,13 +78,17 @@ def _slip(price, direction, amount):
     return price + amount if direction == "long" else price - amount
 
 
-def run_backtest(instrument_frames, starting_cash=10_000, commission_per_trade=0.0):
+def run_backtest(instrument_frames, starting_cash=10_000, commission_per_trade=0.0, config=DEFAULT_CONFIG):
     """
     Run the full multi-instrument backtest.
 
     `instrument_frames`: {symbol: DataFrame} - each already produced by
     signals.prepare_instrument_frame() and already sliced to the desired
     date range (e.g. the training or testing period).
+
+    `config`: a risk_management.RiskConfig - all the tunable risk/safety
+    numbers. Defaults to the spec's original values; pass a different
+    RiskConfig to try a variation (see run_backtest.py's experiment runner).
 
     Returns a dict with the account, a trade log, a rejection log, and
     the shared equity curve.
@@ -94,7 +97,7 @@ def run_backtest(instrument_frames, starting_cash=10_000, commission_per_trade=0
 
     unified_timestamps = sorted(set().union(*[df.index for df in instrument_frames.values()]))
 
-    account = PortfolioAccount(starting_cash)
+    account = PortfolioAccount(starting_cash, config=config)
     pending_orders = {}       # symbol -> order dict, awaiting fill at the next bar
     previous_ts_by_symbol = {}
     equity_curve = []
@@ -165,11 +168,13 @@ def run_backtest(instrument_frames, starting_cash=10_000, commission_per_trade=0
 
                     if pd.isna(row.get("atr")):
                         reject_reason = "atr_not_ready"
-                    elif data_is_stale(ts, previous_ts_by_symbol.get(symbol)):
+                    elif data_is_stale(ts, previous_ts_by_symbol.get(symbol), config=config):
                         reject_reason = "stale_data"
                     elif near_economic_announcement(ts):
                         reject_reason = "econ_calendar_blackout"
-                    elif not spread_is_acceptable(row["spread_close"], row["avg_spread_100"], spec.hard_spread_cap):
+                    elif not spread_is_acceptable(
+                        row["spread_close"], row["avg_spread_100"], spec.hard_spread_cap, config=config
+                    ):
                         reject_reason = "spread_abnormal"
                     else:
                         ok, acct_reason = account.can_open_new_trade(symbol)
@@ -178,11 +183,14 @@ def run_backtest(instrument_frames, starting_cash=10_000, commission_per_trade=0
 
                     if reject_reason is None:
                         stop_price_est, take_profit_price_est, stop_distance = calculate_stop_and_target(
-                            direction, row["Close"], row["atr"]
+                            direction, row["Close"], row["atr"], config=config
                         )
-                        target_distance = TAKE_PROFIT_ATR_MULTIPLE * row["atr"]
+                        target_distance = config.take_profit_atr_multiple * row["atr"]
                         value_per_unit = value_per_price_unit(symbol, row["Close"])
-                        size = calculate_position_size(account.balance, stop_distance, value_per_unit, spec.min_units)
+                        size = calculate_position_size(
+                            account.balance, stop_distance, value_per_unit, spec.min_units,
+                            row["Close"], config=config
+                        )
 
                         if size == 0:
                             reject_reason = "min_size_exceeds_risk_budget"

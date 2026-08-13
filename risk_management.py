@@ -6,13 +6,18 @@ signals.py) actually gets traded, and how big that trade is:
 
   - Position sizing: risk a fixed % of account BALANCE per trade, based
     on the ATR-derived stop distance and the instrument's pip/point value.
-  - ATR-based stop-loss / take-profit levels (1.5x ATR / 3x ATR).
+  - ATR-based stop-loss / take-profit levels.
   - `PortfolioAccount`: a stateful object the backtest engine drives bar
     by bar, tracking a SHARED account across all instruments and
     enforcing every safety limit from the spec: daily/weekly loss halts,
     drawdown suspension, consecutive-loss cooldown, max open positions,
     per-correlation-group exclusivity, total open risk cap, spread and
     staleness checks, and overnight financing (swap) costs.
+
+All the tunable numbers (risk %, ATR multiples, safety-limit thresholds)
+live in `RiskConfig` rather than as bare module constants, so
+run_backtest.py can run several parameter variations back to back in one
+process without one run's settings leaking into another's.
 
 A note on BALANCE vs EQUITY (this distinction is deliberate, not
 sloppiness): position sizing uses BALANCE (realized P&L only - closed
@@ -25,48 +30,64 @@ that's already locked in.
 """
 
 import math
+import datetime as dt
 from dataclasses import dataclass, field
 
 from instruments import INSTRUMENTS, value_per_price_unit
 from econ_calendar import is_blackout_window
 
-# --- Strategy-wide constants (the spec's numbers) ---------------------------
-RISK_PER_TRADE_PCT = 0.0025        # risk 0.25% of balance per trade
-STOP_LOSS_ATR_MULTIPLE = 1.5
-TAKE_PROFIT_ATR_MULTIPLE = 3.0     # 3x / 1.5x = 2:1 reward-to-risk
 
-MAX_OPEN_POSITIONS = 3
-TOTAL_OPEN_RISK_CAP_PCT = 0.0075   # 0.75%
-DAILY_LOSS_LIMIT_PCT = 0.01        # stop for the day after a 1% loss
-WEEKLY_LOSS_LIMIT_PCT = 0.025      # stop for the week after a 2.5% loss
-DRAWDOWN_SUSPEND_PCT = 0.08        # suspend ALL trading after an 8% equity drawdown from peak
-DRAWDOWN_RESUME_PCT = 0.04         # resume once drawdown recovers back to within 4% of peak -
-                                    # a hysteresis gap (not the same 8% line) so the account
-                                    # doesn't flip suspended/unsuspended on every tiny wiggle
-                                    # right at the boundary
-DRAWDOWN_SUSPEND_MAX_COOLDOWN_DAYS = 30
-                                    # Equity-recovery resume can never fire if there's nothing
-                                    # left open to move equity (the only lever is trading, and
-                                    # trading is exactly what's blocked - a real deadlock we hit
-                                    # in testing). This is the fallback: resume on EITHER equity
-                                    # recovering to DRAWDOWN_RESUME_PCT OR this many days
-                                    # elapsing since suspension, whichever comes first.
-CONSECUTIVE_LOSS_LIMIT = 3         # pause until the next trading day after 3 losses in a row
+# =============================================================================
+# Tunable configuration
+# =============================================================================
 
-SPREAD_REJECT_MULTIPLE = 2.5       # reject if spread > 2.5x its own trailing 100-bar average
-STALE_DATA_MAX_GAP_HOURS = 3       # reject if the last candle is older than this (non-weekend)
-STALE_DATA_MAX_WEEKEND_GAP_HOURS = 72  # forex closes for the weekend - allow for that gap
+@dataclass
+class RiskConfig:
+    """Every tunable number in the strategy's risk management, in one
+    place. Defaults match the original spec; pass a modified RiskConfig
+    into run_backtest()/PortfolioAccount to try a variation without
+    touching any other code."""
+
+    risk_per_trade_pct: float = 0.0025          # risk 0.25% of balance per trade
+    stop_loss_atr_multiple: float = 1.5
+    take_profit_atr_multiple: float = 3.0        # 2:1 reward-to-risk at the defaults
+
+    max_open_positions: int = 3
+    total_open_risk_cap_pct: float = 0.0075      # 0.75%
+    daily_loss_limit_pct: float = 0.01           # stop for the day after a 1% loss
+    weekly_loss_limit_pct: float = 0.025         # stop for the week after a 2.5% loss
+    drawdown_suspend_pct: float = 0.08           # suspend ALL trading after this much drawdown
+    drawdown_resume_pct: float = 0.04            # resume once drawdown recovers to within this
+    drawdown_suspend_max_cooldown_days: int = 30 # ...or after this many days, whichever first
+    consecutive_loss_limit: int = 3              # pause until next trading day after N losses in a row
+
+    spread_reject_multiple: float = 2.5          # reject if spread > this x its trailing average
+    stale_data_max_gap_hours: float = 3
+    stale_data_max_weekend_gap_hours: float = 72
+
+    max_leverage: float = 30.0                   # cap notional exposure at this x balance - a
+                                                   # real broker margin limit the risk-per-trade
+                                                   # formula alone doesn't account for. Without it,
+                                                   # a very tight stop (low-ATR period) can produce
+                                                   # unrealistically huge position sizes; found via
+                                                   # stress-testing when a runaway swap-financing
+                                                   # feedback loop showed up in one test window
+                                                   # (huge notional -> huge financing -> inflated
+                                                   # balance -> even huger next position). 30:1 is a
+                                                   # common retail FX leverage limit (e.g. ESMA).
+
+
+DEFAULT_CONFIG = RiskConfig()
 
 
 # =============================================================================
 # Position sizing and stop/target calculation
 # =============================================================================
 
-def calculate_stop_and_target(direction, entry_price, atr_value):
-    """ATR-based stop-loss and take-profit price levels: 1.5x ATR stop,
-    3x ATR target (a 2:1 reward-to-risk ratio)."""
-    stop_distance = STOP_LOSS_ATR_MULTIPLE * atr_value
-    target_distance = TAKE_PROFIT_ATR_MULTIPLE * atr_value
+def calculate_stop_and_target(direction, entry_price, atr_value, config=DEFAULT_CONFIG):
+    """ATR-based stop-loss and take-profit price levels."""
+    stop_distance = config.stop_loss_atr_multiple * atr_value
+    target_distance = config.take_profit_atr_multiple * atr_value
 
     if direction == "long":
         stop_price = entry_price - stop_distance
@@ -78,20 +99,30 @@ def calculate_stop_and_target(direction, entry_price, atr_value):
     return stop_price, take_profit_price, stop_distance
 
 
-def calculate_position_size(balance, stop_distance_price_units, value_per_unit, min_units):
+def calculate_position_size(balance, stop_distance_price_units, value_per_unit, min_units,
+                             current_price, config=DEFAULT_CONFIG):
     """
-    Risk-based position sizing:
-        target_risk_dollars = balance * RISK_PER_TRADE_PCT
-        size (units) = target_risk_dollars / (stop_distance * value_per_unit)
+    Risk-based position sizing, capped at a realistic broker leverage limit:
+        size_by_risk     = (balance * risk_per_trade_pct) / (stop_distance * value_per_unit)
+        size_by_leverage = (config.max_leverage * balance) / current_price
+        size = floor(min(size_by_risk, size_by_leverage))
+
+    The leverage cap matters more than it might look: during a very
+    low-volatility stretch, ATR (and so stop_distance) can get tiny,
+    which would otherwise blow the risk-based size up to an unrealistic
+    size with no real-world margin constraint stopping it - exactly what
+    happened in stress-testing before this cap was added.
 
     Rounded DOWN to whole units (OANDA trades at 1-unit granularity). If
-    even `min_units` would risk more than the target, returns 0 - the
-    caller must treat 0 as "reject this trade", never open a smaller
-    position than the risk budget allows.
+    even `min_units` would exceed the risk budget OR the leverage cap,
+    returns 0 - the caller must treat 0 as "reject this trade", never
+    open a smaller position than either constraint allows.
     """
-    target_risk_dollars = balance * RISK_PER_TRADE_PCT
-    raw_size = target_risk_dollars / (stop_distance_price_units * value_per_unit)
-    size = math.floor(raw_size)
+    target_risk_dollars = balance * config.risk_per_trade_pct
+    size_by_risk = target_risk_dollars / (stop_distance_price_units * value_per_unit)
+    size_by_leverage = (config.max_leverage * balance) / current_price
+
+    size = math.floor(min(size_by_risk, size_by_leverage))
 
     if size < min_units:
         return 0
@@ -103,7 +134,7 @@ def calculate_position_size(balance, stop_distance_price_units, value_per_unit, 
 # Pre-trade checks that aren't about account state (spread, stale data, news)
 # =============================================================================
 
-def spread_is_acceptable(current_spread, avg_spread_100, hard_cap):
+def spread_is_acceptable(current_spread, avg_spread_100, hard_cap, config=DEFAULT_CONFIG):
     """Reject if the spread is abnormally wide vs. its own recent
     trailing average, or blows through a hard per-instrument cap (a
     backstop for the early backtest period before avg_spread_100 has
@@ -112,12 +143,12 @@ def spread_is_acceptable(current_spread, avg_spread_100, hard_cap):
         return False  # not enough history yet to judge "normal" - be conservative
     if current_spread > hard_cap:
         return False
-    if current_spread > SPREAD_REJECT_MULTIPLE * avg_spread_100:
+    if current_spread > config.spread_reject_multiple * avg_spread_100:
         return False
     return True
 
 
-def data_is_stale(bar_timestamp, previous_bar_timestamp):
+def data_is_stale(bar_timestamp, previous_bar_timestamp, config=DEFAULT_CONFIG):
     """Reject if there's a suspiciously large gap since the last candle -
     could mean missing/stale data rather than a genuine market closure.
     Forex closes for the weekend, so a Friday-to-Sunday/Monday gap is
@@ -126,7 +157,7 @@ def data_is_stale(bar_timestamp, previous_bar_timestamp):
         return False
     gap = bar_timestamp - previous_bar_timestamp
     spans_weekend = previous_bar_timestamp.weekday() == 4 and bar_timestamp.weekday() in (5, 6, 0)
-    limit_hours = STALE_DATA_MAX_WEEKEND_GAP_HOURS if spans_weekend else STALE_DATA_MAX_GAP_HOURS
+    limit_hours = config.stale_data_max_weekend_gap_hours if spans_weekend else config.stale_data_max_gap_hours
     return gap.total_seconds() / 3600 > limit_hours
 
 
@@ -160,12 +191,13 @@ class PortfolioAccount:
     A single account shared across all instruments. The backtest engine
     drives this bar by bar: it's the one place that knows the true,
     combined state of the whole book, which is what lets it enforce
-    portfolio-wide rules (max 3 positions total, 0.75% total open risk,
-    one trade per correlation group, daily/weekly/drawdown circuit
-    breakers) that a single-instrument backtest can't see.
+    portfolio-wide rules (max open positions, total open risk, one trade
+    per correlation group, daily/weekly/drawdown circuit breakers) that a
+    single-instrument backtest can't see.
     """
 
-    def __init__(self, starting_cash):
+    def __init__(self, starting_cash, config=DEFAULT_CONFIG):
+        self.config = config
         self.starting_cash = starting_cash
         self.balance = starting_cash          # realized only (see module docstring)
         self.peak_equity = starting_cash
@@ -232,38 +264,41 @@ class PortfolioAccount:
         """Check the daily loss limit, weekly loss limit, and drawdown
         suspension against current equity. Call after handle_day_week_rollover
         (and after marking positions to market) at every bar."""
+        cfg = self.config
+
         if not self.daily_halted and self.daily_start_equity > 0:
             daily_change = (current_equity - self.daily_start_equity) / self.daily_start_equity
-            if daily_change <= -DAILY_LOSS_LIMIT_PCT:
+            if daily_change <= -cfg.daily_loss_limit_pct:
                 self.daily_halted = True
 
         if not self.weekly_halted and self.weekly_start_equity > 0:
             weekly_change = (current_equity - self.weekly_start_equity) / self.weekly_start_equity
-            if weekly_change <= -WEEKLY_LOSS_LIMIT_PCT:
+            if weekly_change <= -cfg.weekly_loss_limit_pct:
                 self.weekly_halted = True
 
         self.peak_equity = max(self.peak_equity, current_equity)
         if self.peak_equity > 0:
             drawdown = (self.peak_equity - current_equity) / self.peak_equity
 
-            if not self.drawdown_suspended and drawdown >= DRAWDOWN_SUSPEND_PCT:
+            if not self.drawdown_suspended and drawdown >= cfg.drawdown_suspend_pct:
                 self.drawdown_suspended = True
                 self.drawdown_suspended_since = timestamp
 
             elif self.drawdown_suspended:
                 # Resume on EITHER equity recovering back to within
-                # DRAWDOWN_RESUME_PCT of peak (a lower threshold than the 8%
-                # that triggered suspension - hysteresis, so it doesn't flip
-                # every bar right at the boundary), OR a fixed cooldown
-                # elapsing, whichever comes first. The cooldown fallback
-                # exists because equity-recovery alone can never fire if
-                # there's nothing left open to move equity (the only lever
-                # is trading, and trading is exactly what's blocked) - a
-                # real deadlock this strategy hit in practice.
-                recovered = drawdown <= DRAWDOWN_RESUME_PCT
+                # drawdown_resume_pct of peak (a lower threshold than the
+                # one that triggered suspension - hysteresis, so it
+                # doesn't flip every bar right at the boundary), OR the
+                # fixed cooldown elapsing, whichever comes first. The
+                # cooldown fallback exists because equity-recovery alone
+                # can never fire if there's nothing left open to move
+                # equity (the only lever is trading, and trading is
+                # exactly what's blocked) - a real deadlock this strategy
+                # hit in practice with the original permanent-halt design.
+                recovered = drawdown <= cfg.drawdown_resume_pct
                 cooldown_elapsed = (
                     self.drawdown_suspended_since is not None
-                    and (timestamp - self.drawdown_suspended_since).days >= DRAWDOWN_SUSPEND_MAX_COOLDOWN_DAYS
+                    and (timestamp - self.drawdown_suspended_since).days >= cfg.drawdown_suspend_max_cooldown_days
                 )
                 if recovered or cooldown_elapsed:
                     self.drawdown_suspended = False
@@ -274,6 +309,7 @@ class PortfolioAccount:
     def can_open_new_trade(self, symbol):
         """All the account-state gates a signal must clear before we even
         size it. Returns (True, None) or (False, reason_string)."""
+        cfg = self.config
         spec = INSTRUMENTS[symbol]
 
         if self.drawdown_suspended:
@@ -286,13 +322,13 @@ class PortfolioAccount:
             return False, "consecutive_loss_cooldown"
         if symbol in self.open_positions:
             return False, "already_open"
-        if len(self.open_positions) >= MAX_OPEN_POSITIONS:
+        if len(self.open_positions) >= cfg.max_open_positions:
             return False, "max_open_positions"
         if spec.correlation_group in self.correlation_groups_open:
             return False, "correlation_limit"
 
         current_open_risk_pct = sum(p.risk_pct for p in self.open_positions.values())
-        if current_open_risk_pct + RISK_PER_TRADE_PCT > TOTAL_OPEN_RISK_CAP_PCT + 1e-9:
+        if current_open_risk_pct + cfg.risk_per_trade_pct > cfg.total_open_risk_cap_pct + 1e-9:
             return False, "total_open_risk_cap"
 
         return True, None
@@ -321,6 +357,7 @@ class PortfolioAccount:
         return position
 
     def close_position(self, symbol, exit_time, exit_price, exit_reason, commission=0.0):
+        cfg = self.config
         position = self.open_positions.pop(symbol)
         self.correlation_groups_open.discard(position.correlation_group)
 
@@ -329,9 +366,7 @@ class PortfolioAccount:
 
         if pnl < 0:
             self.consecutive_losses += 1
-            if self.consecutive_losses >= CONSECUTIVE_LOSS_LIMIT and self.cooldown_until_date is None:
-                # Pause new trades until the NEXT trading day.
-                import datetime as dt
+            if self.consecutive_losses >= cfg.consecutive_loss_limit and self.cooldown_until_date is None:
                 self.cooldown_until_date = exit_time.date() + dt.timedelta(days=1)
         else:
             self.consecutive_losses = 0
