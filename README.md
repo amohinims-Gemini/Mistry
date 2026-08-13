@@ -6,10 +6,12 @@ historical data from OANDA.
 
 **This is a learning/research project, not financial advice.**
 
-**BACKTEST ONLY.** Nothing in this project places real trades. The only
-OANDA API usage anywhere is a read-only historical-candles fetch
-(`data_fetch.py`) - no order, trade, or account-modification endpoint is
-ever called.
+**BACKTEST ONLY.** Nothing in this project places real trades yet. The
+only OANDA API usage in the committed backtest is a read-only historical-
+candles fetch (`data_fetch.py`) - no order, trade, or account-
+modification endpoint is called there. A separate, **incomplete and
+unfinished** live-demo-trading connector lives in `live/` - see "Live
+trading (paused, incomplete)" below before assuming it does anything.
 
 ## Setup
 
@@ -22,35 +24,32 @@ cp .env.example .env            # then fill in your OANDA credentials
 
 See "OANDA credentials" below for where to get the values that go in `.env`.
 
-## Usage
-
+To run the test suite (position-sizing math, currency conversion):
 ```bash
-source venv/bin/activate
-python run_backtest.py
+pip install -r requirements-dev.txt
+pytest tests/ -v
 ```
 
-First run fetches several years of 1H + 4H candle history for EUR/USD,
-GBP/USD, USD/JPY, and Gold from OANDA (paginated - takes a few minutes)
-and caches it to `data_cache/`. Later runs only fetch new candles since
-the last run, so they're fast.
-
-## Current result
+## Current, honest status
 
 Trained on 2020-08-13 to 2024-10-25, tested out-of-sample on 2024-10-25
-to 2026-08-13 (real OANDA history, not synthetic):
+to 2026-08-13 (real OANDA history):
 
 | | Training | Testing (unseen) |
 |---|---|---|
-| Completed trades | 91 | 430 |
-| Win rate | 23.1% | 36.5% |
-| Profit factor | 0.522 | **1.221** |
-| Return | -8.31% | **+24.77%** |
-| Max drawdown | 8.45% | 3.26% |
+| Completed trades | ~30 | ~184 |
+| Profit factor | ~0.76 | **1.24** |
+| Return (trading only, financing excluded) | ~-1% | **+5.0%** |
+| Max drawdown | ~4% | **2.4%** |
 
-**Passes all 4 of the spec's bars** (≥150 combined trades, positive
-out-of-sample return, <10% drawdown both periods, out-of-sample profit
-factor >1.2) on this dataset. See "Tuning history" below for exactly how
-it got there and what that PASS should (and shouldn't) be read as.
+This **passes all 4 of the spec's bars** on this one split. It is **not
+robust** - an 11-scenario stress test (different train/test splits plus
+independent historical windows) shows the current default configuration
+only clears every bar in about 2 of 11 scenarios, with genuinely bad
+tail-risk drawdowns (worst observed: 28% test, 44% train) in adverse
+windows. Treat the single-split PASS above as "true on this data, not
+evidence of a robust edge" - see "Tuning history" for the full,
+unflattering story of how this was found out.
 
 ## The strategy
 
@@ -61,23 +60,39 @@ other file needs to change.
 **Timeframes:** 4H determines the trend, 1H triggers entries. All
 decisions happen on a closed candle - never mid-candle.
 
-**Entry (long; short is the exact mirror):**
+**Entry (long; short is the exact mirror), current defaults:**
 1. 50 EMA above 200 EMA on the 4H chart
-2. 1H price closes above its highest price of the previous 95 candles
-   (the spec originally said 20 - see "Tuning history" for why this changed)
+2. 1H price closes above its highest price of the previous 20 candles
+   (the original spec value - see "Tuning history": a 95-candle variant
+   was adopted for a while based on evidence that later turned out to be
+   built on two bugs, and was reverted once they were fixed)
 3. Spread is within a normal range for that instrument (rejected if abnormally wide)
 
+Two additional entry filters are implemented in `signals.py` but **OFF
+by default** - `use_efficiency_filter` (backed by a real diagnosed
+pattern, a genuine partial improvement, not yet adopted as default) and
+`use_volatility_filter`/`breakout_buffer_atr_fraction` (tried, made
+things worse). See "Tuning history".
+
 **Stop-loss / take-profit:** 1.5x ATR stop, 3x ATR target (2:1
-reward-to-risk). Every simulated position carries both from the moment
-it's opened.
+reward-to-risk). A stop-to-breakeven trade-management option is
+implemented in `risk_management.py` (`use_breakeven_stop`) but **OFF by
+default** - it helped the one bad episode it was designed around, but
+made average stress-test performance worse (see "Tuning history").
 
 **Position sizing:** risk 0.25% of account *balance* (realized P&L only,
-not floating) per trade, capped at 30:1 leverage on notional exposure. If
-even the smallest tradeable size would exceed either limit, the trade is
-rejected rather than taken anyway. (The leverage cap isn't in the
-original spec - see "Tuning history"; without it, a very tight ATR-based
-stop during a quiet period could size a position far beyond anything a
-real broker would allow.)
+not floating) per trade, capped at 30:1 leverage on notional exposure
+against a **fixed reference balance** (never a balance inflated by
+running P&L or financing - see "Tuning history" for why that distinction
+matters). If even the smallest tradeable size would exceed either limit,
+the trade is rejected rather than taken anyway.
+
+**Account currency:** fully supports non-USD accounts (this project's
+own demo account is GBP-denominated). `instruments.value_per_price_unit`
+and `instruments.notional_value_per_unit` handle direct, base-matching,
+and true cross-currency cases (e.g. a GBP account trading EUR/USD, where
+neither currency is GBP) via triangulated conversion rates - see
+`tests/test_gbp_position_sizing.py` for the validation.
 
 **Safety limits (all enforced by `risk_management.py`'s `PortfolioAccount`,
 which is the one place that sees the whole book across all 4
@@ -85,16 +100,98 @@ instruments at once):**
 - Daily loss limit: stop for the day after a 1% loss
 - Weekly loss limit: stop for the week after a 2.5% loss
 - Drawdown suspension: halts all trading once equity falls 8% from its
-  peak, resuming on equity recovery or a cooldown - see below
+  peak, resuming on equity recovery or a 30-day cooldown
 - 3 consecutive losses: pause until the next trading day
 - Max 3 open positions at once; total open risk capped at 0.75%
 - Only one trade open at a time among EUR/USD, GBP/USD, and USD/JPY
-  (grouped as "usd_fx" correlation) - Gold is tracked separately so it
-  can be held alongside one FX trade
+  (grouped as "usd_fx" correlation) - Gold is tracked separately
 - Rejects trades on abnormal spread or stale/missing data
 - Avoids opening new trades near an approximate high-impact-news window
   (see limitation below)
 - No martingale, no grid trading, no increasing size after a loss
+
+## Tuning history (the honest, unflattering version)
+
+This strategy went through many rounds of evidence-based tuning. Rather
+than only keeping the current conclusion, this section keeps the real
+order of events - including the parts that were wrong at the time -
+because several "validated" results later turned out to rest on bugs,
+and the process of finding that out is itself the most useful part of
+this history to preserve.
+
+1. **A leverage-cap bug** (no cap on notional exposure at all) caused a
+   runaway swap-financing feedback loop during stress-testing. Fixed
+   with a 30:1 leverage cap.
+2. **Drawdown-threshold tuning (6% vs 8%) turned out not to matter**
+   once the leverage cap was in place - real drawdowns rarely got deep
+   enough anymore for the difference to ever trigger during testing.
+3. **Two new entry filters (volatility filter, breakout buffer) were
+   tried and made profit factor worse.** Left implemented, OFF by default.
+4. **Breakout channel length (20-100 candles) was swept and 95
+   appeared to win**, validated (at the time) by an 11-scenario
+   robustness stress test showing consistent average improvement.
+   Adopted as the new default.
+5. **A second, more serious bug was then found**: the leverage cap's
+   notional math was wrong for pairs where the account currency matches
+   the BASE currency (e.g. USD_JPY on a USD account) - it divided by the
+   raw price when it should not have divided at all, under-capping
+   USD_JPY's real leverage by ~150x throughout the *entire* backtest
+   history, including everything "validated" in steps 1-4.
+6. **Fixing that bug exposed a third issue**: the leverage cap was
+   scaling with *current* (financing-inflated) balance rather than a
+   fixed reference, letting the static/approximate swap-financing model
+   compound into results dominated by an untrustworthy assumption (one
+   test showed financing at ~30x the strategy's actual trading P&L).
+   Fixed by (a) pinning the leverage cap to a fixed reference balance,
+   and (b) excluding financing from the scored return/drawdown metrics
+   entirely (still reported separately - see `compute_metrics`).
+7. **Re-running the full validation suite under corrected math reversed
+   the earlier conclusion**: channel=95 no longer outperformed, and
+   NEITHER channel=20 nor channel=95 reliably cleared the profit-factor
+   bar across the 11-scenario stress test. Channel-length tuning was
+   retired as a lever. Default reverted to channel=20 (the original spec
+   value) as the least-worse, most literal choice - explicitly NOT
+   because it was shown robust (it isn't).
+8. **A trade-level diagnostic** (comparing winners vs losers on an
+   INDEPENDENT trend-strength measure - Kaufman's Efficiency Ratio, not
+   the strategy's own EMA filter, to avoid circular reasoning) found a
+   real, consistent pattern across two different channel-length trade
+   sets: entries during choppy/inefficient price action lose badly (win
+   rate as low as 8%), entries during genuinely efficient directional
+   moves do much better (37-39%, near the ~33% breakeven for a 2:1 R:R).
+9. **An Efficiency Ratio entry filter was built and stress-tested**:
+   genuine, cross-validated improvement (pass rate 18%->36%, better
+   average drawdown/PF/return across all 11 scenarios) but still fails
+   most scenarios and doesn't eliminate tail risk. NOT adopted as
+   default pending further work - implemented and available
+   (`use_efficiency_filter`) but off.
+10. **A deep dive into the worst stress-test episode** (2023-12-28 to
+    2024-07-23, a broad-but-choppy uptrend - ~200 uniform ~-1R losses,
+    a 13-trade losing streak) found the efficiency filter does NOT fix
+    this specific regime (win rate unchanged with/without it: 23.3% vs
+    23.6%) - a real structural blind spot, not a threshold-tuning problem.
+11. **A stop-to-breakeven trade-management mechanism was built and
+    stress-tested** as a structural response (targeting the exact
+    failure pattern from #10 rather than another entry filter): it
+    helped the diagnosed episode substantially, but made AVERAGE
+    stress-test performance worse (pass rate 18%->9%, worse average PF/
+    return, and a WORSE worst-case drawdown in two scenarios). Likely
+    mechanism: this strategy's thin edge depends on a minority of full
+    2R winners, and a breakeven stop disproportionately clips those on
+    their way to target in trending regimes, costing more than it saves
+    in choppy ones. NOT adopted - implemented and available
+    (`use_breakeven_stop`) but off.
+12. **The structural redesign is currently paused** after two of three
+    ideas (channel retuning, breakeven stop) failed stress-testing and
+    one (efficiency filter) showed only partial improvement. Current
+    defaults are the plain original spec entry/risk logic.
+
+**Bottom line:** every "this fixes it" moment in this history except the
+efficiency-ratio filter was later found to be wrong or to not
+generalize. The efficiency-ratio filter is the one piece of real,
+partially-validated signal so far - not yet strong enough on its own to
+call this strategy solved. Treat everything in this project as "as
+honest as we know how to make it," not "proven to work."
 
 ## How the 8% drawdown suspension resumes
 
@@ -113,54 +210,20 @@ re-suspending for another 30 days - a periodic "try again" pattern
 rather than a full recovery. See `PortfolioAccount.update_risk_flags()`
 in `risk_management.py`.
 
-## Tuning history (how the current defaults were chosen)
+## Live trading (paused, incomplete)
 
-This strategy went through several rounds of evidence-based tuning after
-the initial implementation. In order:
-
-1. **A leverage-cap bug, found via stress-testing.** The original
-   position-sizing formula (risk% / (stop distance × pip value)) had no
-   cap on notional exposure. During a low-volatility stretch, a tiny
-   ATR-based stop could size a position at absurd leverage (one stress
-   scenario hit ~2000:1 on USD/JPY), and the resulting swap financing on
-   that notional created a runaway feedback loop that inflated results
-   unrealistically. Fixed with a 30:1 leverage cap (`RiskConfig.max_leverage`,
-   a common real-world retail FX limit) - this alone resolved most of an
-   earlier apparent drawdown problem, for free, before any other tuning.
-2. **Drawdown-threshold tuning (6% vs the spec's 8%) turned out not to
-   matter** once the leverage cap was in place - real drawdowns rarely
-   got deep enough anymore for the 6%/8% difference to ever trigger
-   during out-of-sample testing. Verified via an 11-scenario stress test
-   (multiple train/test splits + independent historical windows); it was
-   dropped rather than kept for no measurable benefit.
-3. **Two new entry filters were tried and made things worse**: a
-   volatility filter (skip signals when ATR is below its trailing
-   average) and a breakout buffer (require clearing the breakout level
-   by a margin). Both are implemented in `signals.py` (`SignalConfig.
-   use_volatility_filter`, `breakout_buffer_atr_fraction`) but left OFF
-   by default because they measurably hurt profit factor in testing.
-4. **Breakout channel length (20 to 100 candles) was swept and found to
-   matter a lot.** Longer channels traded quantity for quality: fewer,
-   more significant breakouts, consistently better profit factor and
-   drawdown up through about 80-95 candles. This was the one lever that
-   moved every metric the right way at once. **Validated with an
-   11-scenario robustness stress test** (not just the one split it was
-   originally found on) - channel=95 improved average profit factor,
-   drawdown, and return across most scenarios, not only the split that
-   happened to produce the first PASS. It was NOT uniformly better,
-   though: in one distinct historical window (the 2020-2022 stretch), it
-   underperformed the original 20-candle default outright (PF 0.70-0.74
-   vs baseline's 1.07). Channel length became the new default
-   (`SignalConfig.channel_period = 95`) on the strength of that
-   consistency, not because it passes everywhere.
-
-**Bottom line on the "PASSES all 4 bars" result above:** it's real, on
-real data, and backed by more than a single lucky train/test split. It
-is NOT evidence the strategy reliably clears the bar in every market
-regime - the stress test that validated channel=95 also showed it losing
-to the original default in at least one historical window. Treat the
-current defaults as "meaningfully better, evidence-based" rather than
-"solved."
+A `live/` directory exists with the start of a live-demo-trading
+connector: `account_safety.py` (a hard, mandatory, 3-layer check that
+the connected account is genuinely a PRACTICE/demo account, never live -
+tested and working) and `oanda_live_client.py` (the only place beyond
+`data_fetch.py` that talks to OANDA - account state, open trades, and
+order placement with an attached stop-loss). **This is unfinished**:
+`live_state.py`, `live_account_sync.py`, `order_execution.py`,
+`live_logging.py`, and the main `run_live.py` loop were never built -
+work paused to investigate the sizing bugs and strategy weaknesses
+documented above instead. Do not attempt to run anything from `live/` -
+most of it doesn't exist yet, and what does exist has never placed an
+order.
 
 ## Known approximations (deliberate, and documented in the code)
 
@@ -172,12 +235,14 @@ current defaults as "meaningfully better, evidence-based" rather than
 - **Swap/financing rates** (`instruments.py`): static, ballpark annual %
   rates per instrument/direction, applied nightly (tripled on Wednesdays
   for weekend rollover). Real OANDA rates move with central bank policy
-  year to year - this can't reproduce that.
+  year to year - this can't reproduce that, and is excluded from the
+  scored backtest metrics for exactly this reason (see "Tuning history").
 - **Rollover hour** fixed at 21:00 UTC year-round, not adjusted for US
   daylight saving.
-- **Leverage cap (30:1)** is a realistic-but-arbitrary retail limit, not
-  something specified by the original spec or fetched from OANDA's
-  actual margin rules for a given account.
+- **Leverage cap (30:1)** is a realistic-but-arbitrary retail limit for
+  scoring purposes; not fetched from OANDA's actual margin rules for a
+  given account (real per-instrument margin rates were checked once
+  live for the `live/` connector - Gold's real cap is stricter, 20:1).
 - **Fill/exit modeling**: signals are evaluated on a closed 1H candle;
   orders fill at the next candle's open (ask for buys, bid for sells)
   plus ATR-scaled slippage. Take-profit fills assume no slippage (limit-
@@ -210,12 +275,14 @@ results ever look unexpectedly off, check the run's output for a
 
 | File | Purpose |
 |---|---|
-| `instruments.py` | Per-instrument specs: symbol, pip value math, correlation group, spread cap, swap rates |
+| `instruments.py` | Per-instrument specs, pip/notional value math (incl. cross-currency), correlation group, spread cap, swap rates |
 | `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback |
 | `indicators.py` | EMA, ATR, rolling high/low channel |
 | `signals.py` | Merges the 4H trend filter onto the 1H timeline (no lookahead) and computes entry signals; `SignalConfig` holds all tunable entry-logic parameters |
-| `risk_management.py` | Position sizing (with leverage cap) + `PortfolioAccount`: every safety limit, shared across all instruments; `RiskConfig` holds all tunable risk parameters |
+| `risk_management.py` | Position sizing (with leverage cap) + `PortfolioAccount`: every safety limit, breakeven-stop trade management, shared across all instruments; `RiskConfig` holds all tunable risk parameters |
 | `econ_calendar.py` | The approximate news-blackout heuristic (swappable) |
 | `backtest_engine.py` | The custom multi-instrument, chronological-lockstep backtest simulator |
 | `run_backtest.py` | Entry point: fetch data, train/test split, run one or more (SignalConfig, RiskConfig) experiments, print the full honest report + comparison table |
-| `.env.example` | Template for the environment variables `data_fetch.py` needs - copy to `.env` |
+| `tests/` | pytest suite - currently covers currency-conversion/position-sizing math (`requirements-dev.txt`) |
+| `live/` | Incomplete, paused live-demo-trading connector - see "Live trading" above |
+| `.env.example` | Template for the environment variables `data_fetch.py`/`live/` need - copy to `.env` |

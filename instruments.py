@@ -69,29 +69,122 @@ INSTRUMENTS = {
 }
 
 
-def value_per_price_unit(instrument_symbol, current_price, account_currency="USD"):
+def value_per_price_unit(instrument_symbol, current_price, account_currency="USD", current_prices=None):
     """
     How much account-currency value ONE UNIT of this instrument gains or
     loses for a 1.0 move in its quoted price. risk_management.py uses
-    this to turn a stop distance (in price units) into a dollar risk
-    amount for position sizing.
+    this to turn a stop distance (in price units) into an account-
+    currency risk amount for position sizing.
 
     - If the instrument is quoted directly in the account currency
-      (EUR/USD, GBP/USD, XAU/USD, all against a USD account), each unit's
-      value changes 1-for-1 with price: value = 1.
-    - If the account currency is the BASE currency instead (USD/JPY with
-      a USD account), P&L happens in the quote currency (JPY) and has to
-      be converted back to USD using the current exchange rate:
-      value = 1 / price.
-    - True cross pairs, where neither side is the account currency,
-      aren't supported yet - none of the current instruments hit this case.
+      (e.g. EUR/USD against a USD account), each unit's value changes
+      1-for-1 with price: value = 1.
+    - If the account currency is the BASE currency instead (e.g. USD/JPY
+      against a USD account), P&L happens in the quote currency and has
+      to be converted back using the current exchange rate: value = 1/price.
+    - TRUE CROSS case: neither side is the account currency (e.g. a GBP
+      account trading EUR/USD - GBP is neither EUR nor USD). P&L happens
+      in the quote currency and needs a further conversion into the
+      account currency, via `_find_conversion_rate`. This requires
+      `current_prices` - a dict of {oanda_symbol: price} covering
+      whatever pairs are needed to find or triangulate that rate (e.g.
+      {"GBP_USD": 1.27} to convert USD into GBP). Raises if it's needed
+      but not supplied - never silently returns a wrong number.
+
+    Backward-compatibility note: for a USD account, every instrument in
+    this project's INSTRUMENTS registry has USD as either its base or
+    quote currency, so the cross-currency branch is never reached and
+    `current_prices` is never needed - this generalization is purely
+    additive for other account currencies and does not change the
+    already-validated USD-account backtest's behavior.
     """
     spec = INSTRUMENTS[instrument_symbol]
     if spec.quote_currency == account_currency:
         return 1.0
     if spec.base_currency == account_currency:
         return 1.0 / current_price
-    raise NotImplementedError(
-        f"{instrument_symbol}: value_per_price_unit doesn't support cross pairs "
-        f"where neither currency is the account currency ({account_currency})."
+
+    if current_prices is None:
+        raise NotImplementedError(
+            f"{instrument_symbol}: value_per_price_unit needs `current_prices` to "
+            f"convert {spec.quote_currency} into {account_currency} - neither "
+            f"currency of this instrument matches the account currency."
+        )
+    return _find_conversion_rate(spec.quote_currency, account_currency, current_prices)
+
+
+def _find_conversion_rate(from_currency, to_currency, current_prices):
+    """
+    Find the rate to convert 1 unit of `from_currency` into `to_currency`,
+    using whatever instrument prices are available in `current_prices`
+    (a dict of {oanda_symbol: price}, e.g. {"GBP_USD": 1.27}). Tries a
+    direct pair, then its inverse, then triangulates through USD (e.g.
+    JPY -> GBP via JPY -> USD -> GBP, using USD_JPY and GBP_USD).
+
+    Recursion terminates after at most one extra hop: the two recursive
+    calls are always (X, "USD") and ("USD", Y), and on the next level
+    down at least one side is already "USD", which skips the
+    triangulation branch entirely.
+    """
+    if from_currency == to_currency:
+        return 1.0
+
+    direct = f"{from_currency}_{to_currency}"
+    if direct in current_prices:
+        return current_prices[direct]
+
+    inverse = f"{to_currency}_{from_currency}"
+    if inverse in current_prices:
+        return 1.0 / current_prices[inverse]
+
+    if from_currency != "USD" and to_currency != "USD":
+        rate_from_to_usd = _find_conversion_rate(from_currency, "USD", current_prices)
+        rate_usd_to_to = _find_conversion_rate("USD", to_currency, current_prices)
+        return rate_from_to_usd * rate_usd_to_to
+
+    raise ValueError(
+        f"No conversion rate available from {from_currency} to {to_currency} "
+        f"given prices for: {list(current_prices.keys())}"
     )
+
+
+def notional_value_per_unit(instrument_symbol, current_price, account_currency="USD", current_prices=None):
+    """
+    How much account-currency NOTIONAL VALUE one unit (of the base
+    currency) of this instrument represents at the current price. Used
+    for the leverage/margin cap in position sizing: "how many units can
+    max_leverage times my balance afford at today's price".
+
+    This is a DIFFERENT question from value_per_price_unit (which is
+    P&L per price CHANGE, a marginal/derivative quantity) - conflating
+    the two was a real, previously-shipped bug. The old leverage-cap
+    formula divided balance by the raw instrument price unconditionally,
+    which only happens to be correct when the account currency matches
+    the pair's QUOTE currency. For USD_JPY on a USD account, the account
+    currency matches the BASE currency instead, and dividing by the
+    price (~150) under-capped the leverage limit by roughly that same
+    factor - confirmed to have measurably under-sized USD_JPY positions
+    throughout the whole backtest history before this fix.
+
+    - If account currency == BASE currency, 1 unit of base currency IS 1
+      unit of account currency, independent of price: notional = 1.
+    - If account currency == QUOTE currency, 1 unit of base currency is
+      worth `current_price` units of account currency: notional = price.
+    - Cross case: 1 unit of base currency is worth `current_price` units
+      of quote currency, which then needs converting into the account
+      currency - same `current_prices` mechanism as value_per_price_unit.
+    """
+    spec = INSTRUMENTS[instrument_symbol]
+    if spec.base_currency == account_currency:
+        return 1.0
+    if spec.quote_currency == account_currency:
+        return current_price
+
+    if current_prices is None:
+        raise NotImplementedError(
+            f"{instrument_symbol}: notional_value_per_unit needs `current_prices` to "
+            f"convert {spec.quote_currency} into {account_currency} - neither "
+            f"currency of this instrument matches the account currency."
+        )
+    conversion_rate = _find_conversion_rate(spec.quote_currency, account_currency, current_prices)
+    return current_price * conversion_rate

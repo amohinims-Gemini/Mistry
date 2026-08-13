@@ -2,6 +2,7 @@ venv/
 __pycache__/
 *.pyc
 .DS_Store
+.pytest_cache/
 
 # Real credentials - never commit this. Copy .env.example to .env instead.
 .env
@@ -9,3 +10,6 @@ __pycache__/
 # Cached OANDA candle history - regenerable via data_fetch.py, and large
 # (tens of MB across 4 instruments x 2 timeframes x years of 1H data).
 data_cache/
+
+# Runtime state/logs for the (incomplete) live trading connector - see live/
+live_data/

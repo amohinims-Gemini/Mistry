@@ -76,6 +76,20 @@ class RiskConfig:
                                                    # balance -> even huger next position). 30:1 is a
                                                    # common retail FX leverage limit (e.g. ESMA).
 
+    # Trade management - OFF by default (spec-original behavior: fixed stop,
+    # never moved). Backed by a diagnosed failure pattern, not a hypothesis:
+    # the worst historical drawdown episode was ~200 uniform ~-1R losses
+    # stacking up over months during a choppy-but-technically-trending
+    # regime (13-trade losing streak at the worst point). Moving the stop
+    # to breakeven once a trade shows some initial favorable movement
+    # converts some of those eventual full losses into scratches, without
+    # touching entry logic at all. Deliberately ONE new free parameter
+    # (the trigger threshold) - see README.md for why searching over
+    # multiple simultaneous parameters is a real risk, not paranoia.
+    use_breakeven_stop: bool = False
+    breakeven_trigger_r_multiple: float = 1.0    # move stop to breakeven once profit reaches
+                                                   # this many multiples of the original stop distance
+
 
 DEFAULT_CONFIG = RiskConfig()
 
@@ -100,11 +114,11 @@ def calculate_stop_and_target(direction, entry_price, atr_value, config=DEFAULT_
 
 
 def calculate_position_size(balance, stop_distance_price_units, value_per_unit, min_units,
-                             current_price, config=DEFAULT_CONFIG):
+                             notional_value_per_unit, reference_balance_for_leverage, config=DEFAULT_CONFIG):
     """
     Risk-based position sizing, capped at a realistic broker leverage limit:
         size_by_risk     = (balance * risk_per_trade_pct) / (stop_distance * value_per_unit)
-        size_by_leverage = (config.max_leverage * balance) / current_price
+        size_by_leverage = (config.max_leverage * reference_balance_for_leverage) / notional_value_per_unit
         size = floor(min(size_by_risk, size_by_leverage))
 
     The leverage cap matters more than it might look: during a very
@@ -113,6 +127,42 @@ def calculate_position_size(balance, stop_distance_price_units, value_per_unit, 
     size with no real-world margin constraint stopping it - exactly what
     happened in stress-testing before this cap was added.
 
+    `notional_value_per_unit` (see instruments.notional_value_per_unit)
+    is account-currency notional value per unit AT the current price -
+    NOT the same thing as `value_per_unit` (P&L per price CHANGE).
+    Conflating the two here was a real, previously-shipped bug: the
+    formula used to divide balance by the raw instrument price
+    unconditionally, which is only correct when the account currency
+    matches the pair's quote currency. For USD_JPY on a USD account
+    (where the account currency matches the BASE currency instead), that
+    under-capped the leverage limit by roughly the USD_JPY price itself
+    (~150x too restrictive) - confirmed to have measurably under-sized
+    USD_JPY positions throughout the backtest history before this fix.
+
+    `balance` vs `reference_balance_for_leverage` - DELIBERATELY separate,
+    not a naming accident:
+      - `balance` (risk-based sizing) SHOULD scale with the current
+        account balance - risking a constant % of a growing account is
+        correct, standard risk management.
+      - `reference_balance_for_leverage` should NOT scale with current
+        balance. Fixing the leverage-cap bug above exposed a second,
+        distinct problem in testing: this project's swap-financing model
+        is a static, approximate annual rate (see instruments.py), and
+        once large leveraged notional became possible again, a real
+        feedback loop appeared - large notional -> large approximate
+        swap financing -> inflated balance -> an even bigger leverage cap
+        on the next trade (since it scaled with that inflated balance)
+        -> runaway compounding, producing results nowhere close to
+        plausible. Passing a FIXED reference balance (the account's
+        starting balance, never its current one - see call sites) for
+        the leverage cap specifically breaks that loop while leaving
+        risk-based sizing's intended compounding untouched.
+
+    No default for `reference_balance_for_leverage` - every caller must
+    consciously choose it, so this can't silently regress to using
+    current balance again by a future call site forgetting to think
+    about it.
+
     Rounded DOWN to whole units (OANDA trades at 1-unit granularity). If
     even `min_units` would exceed the risk budget OR the leverage cap,
     returns 0 - the caller must treat 0 as "reject this trade", never
@@ -120,7 +170,7 @@ def calculate_position_size(balance, stop_distance_price_units, value_per_unit, 
     """
     target_risk_dollars = balance * config.risk_per_trade_pct
     size_by_risk = target_risk_dollars / (stop_distance_price_units * value_per_unit)
-    size_by_leverage = (config.max_leverage * balance) / current_price
+    size_by_leverage = (config.max_leverage * reference_balance_for_leverage) / notional_value_per_unit
 
     size = math.floor(min(size_by_risk, size_by_leverage))
 
@@ -184,6 +234,49 @@ class Position:
     take_profit_price: float
     risk_dollars: float     # $ actually at risk at entry (after rounding to whole units)
     risk_pct: float         # risk_dollars / balance-at-entry
+    breakeven_triggered: bool = False  # has the stop already been ratcheted to breakeven?
+
+
+def apply_breakeven_if_triggered(position, bid_high, ask_low, config=DEFAULT_CONFIG):
+    """
+    If `position` has moved favorably by `breakeven_trigger_r_multiple`
+    times its ORIGINAL stop distance, move its stop to breakeven (entry
+    price) - a one-way ratchet, never moved back once triggered. Mutates
+    `position.stop_price` in place and returns True if it just moved this
+    call, False otherwise (already triggered, feature off, or not reached).
+
+    Uses the EXIT side of the market for the trigger check (Bid for a
+    long, since exiting a long means selling; Ask for a short) - the same
+    side already used for checking stop/target hits, for consistency.
+
+    Caller's responsibility: call this AFTER checking stop/target hits for
+    the current bar, not before - a breakeven adjustment made this bar
+    should only affect stop-checking in FUTURE bars, never retroactively
+    change the outcome of the bar it triggered on. OHLC data can't tell us
+    the true intra-bar order of "price reached the trigger" vs "price hit
+    the original stop", so assuming the trigger happened first within the
+    same bar would be an unsupported, optimistic assumption - the same
+    reasoning already applied to the stop-vs-target tie-break elsewhere.
+    """
+    if not config.use_breakeven_stop or position.breakeven_triggered:
+        return False
+
+    stop_distance = abs(position.entry_price - position.stop_price)
+    trigger_distance = config.breakeven_trigger_r_multiple * stop_distance
+
+    if position.direction == "long":
+        trigger_price = position.entry_price + trigger_distance
+        reached = bid_high >= trigger_price
+    else:
+        trigger_price = position.entry_price - trigger_distance
+        reached = ask_low <= trigger_price
+
+    if reached:
+        position.stop_price = position.entry_price
+        position.breakeven_triggered = True
+        return True
+
+    return False
 
 
 class PortfolioAccount:
@@ -205,6 +298,22 @@ class PortfolioAccount:
         self.correlation_groups_open = set()
         self.closed_trades = []               # list of dicts, one per completed trade
         self.total_financing_paid = 0.0
+
+        # Trading-only balance: mirrors `balance` but is NEVER touched by
+        # apply_financing() - only by real trade P&L via close_position().
+        # Exists purely for reporting/scoring (run_backtest.py's pass/fail
+        # metrics use this), because this project's swap-financing model
+        # is a static, approximate annual rate (see instruments.py), not
+        # real historical OANDA data. Confirmed in testing that once
+        # leverage was fixed to allow realistic position sizes, financing
+        # under that approximation could reach ~30x the strategy's actual
+        # trading P&L - reporting a "total return" that's 97% financing
+        # assumption would be scoring the wrong thing. `balance` itself
+        # (financing included) is still what position sizing and the
+        # safety-limit circuit breakers use - that's real capital, and
+        # should reflect the true account state during actual operation.
+        # Only the SCORING criteria change, not the account's real behavior.
+        self.trading_only_balance = starting_cash
 
         self.current_date = None
         self.current_week_key = None
@@ -234,6 +343,17 @@ class PortfolioAccount:
         position is valued at its entry price (i.e. contributes 0
         unrealized P&L) rather than crashing."""
         total = self.balance
+        for symbol, pos in self.open_positions.items():
+            price = current_prices.get(symbol, pos.entry_price)
+            total += self.unrealized_pnl(pos, price)
+        return total
+
+    def trading_only_equity(self, current_prices):
+        """Same as equity(), but built from trading_only_balance instead
+        of balance - i.e. with financing excluded. Unrealized P&L (price
+        movement on still-open positions) is never financing anyway, so
+        it's added the same way in both."""
+        total = self.trading_only_balance
         for symbol, pos in self.open_positions.items():
             price = current_prices.get(symbol, pos.entry_price)
             total += self.unrealized_pnl(pos, price)
@@ -363,6 +483,7 @@ class PortfolioAccount:
 
         pnl = self.unrealized_pnl(position, exit_price) - commission
         self.balance += pnl
+        self.trading_only_balance += pnl  # same pnl - this never included financing anyway
 
         if pnl < 0:
             self.consecutive_losses += 1

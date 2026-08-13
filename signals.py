@@ -16,22 +16,39 @@ entry available" signal based on the strategy's technical rules:
   4. (Optional, off by default) Breakout buffer: require the close to
      clear the breakout level by a small ATR-scaled margin, rather than
      by any amount at all - filters out marginal/ambiguous breakouts.
+  5. (Optional, off by default) Efficiency Ratio filter: skip signals
+     unless the market has been moving DIRECTIONALLY efficiently lately,
+     not just cleared a price level - see below, this is the one filter
+     backed by an actual diagnosed pattern rather than a hypothesis.
 
 All of this is configurable via SignalConfig so run_backtest.py can try
 several parameter/filter combinations without editing this file.
 
-*** channel_period default is 95, not the spec's originally-stated 20. ***
-This is a deliberate, evidence-based deviation, not an oversight: a
-channel-length sweep (20 to 100) followed by an 11-scenario robustness
-stress test (different train/test splits AND independent historical
-windows, not just the one split it was found on) showed 95 consistently
-improves profit factor, drawdown, and return ON AVERAGE across most
-scenarios - not just the split it happened to be tuned on. It still does
-NOT make the strategy reliably clear the spec's profit-factor bar in
-every market regime (worst-case scenario in that stress test: PF 0.735),
-so treat this as "meaningfully better than 20," not "solved." See
-README.md for the full before/after numbers. The other two filters (#3,
-#4) remain OFF by default - they were tried and made things worse.
+*** channel_period default is 20, the original spec value. *** An
+evidence-based deviation to 95 was tried and adopted for a while, but a
+later bug-fix round (correcting a leverage-sizing bug and excluding an
+unrealistic financing assumption from scoring) invalidated the evidence
+behind it - re-run under corrected math, 95 no longer outperformed, and
+NEITHER value reliably cleared the spec's profit-factor bar across an
+11-scenario robustness stress test. Channel length is no longer being
+treated as a productive tuning lever; see README.md for the full history.
+
+*** efficiency_ratio filter (#5) exists because of an actual diagnosed
+weakness, not a hypothesis tried on spec. *** A trade-level diagnostic
+(comparing winning vs losing trades on an INDEPENDENT trend-strength
+measure, not the strategy's own EMA filter - every trade already passes
+that by construction, so it can't explain win/loss variation on its own)
+found a strong, consistent pattern across two different channel-length
+configurations: entries taken during choppy/inefficient price action
+lose badly (win rate as low as 8%), entries taken during genuinely
+efficient directional moves do much better (37-39%, near or above the
+2:1 R:R's ~33% breakeven). The EMA50/200 filter is evidently a weak
+proxy for "is this actually trending" - it's often satisfied during
+sideways chop that sits just above/below the long-term average. This is
+DIFFERENT from the (already-tried-and-rejected) volatility filter: that
+measured raw ATR level; this measures directional EFFICIENCY, which is
+what the diagnostic actually separated on. Off by default until swept
+and stress-tested with the same rigor as everything else in this file.
 
 This file only decides "is there a technically valid setup right now" -
 it doesn't know about spreads, account risk, or safety limits. That's
@@ -46,6 +63,12 @@ bar's close:
     index shifted forward by one 4H period - see prepare_4h_trend)
   - the breakout channel and the volatility filter's own trailing
     average both explicitly exclude the current bar (via .shift(1))
+  - the efficiency ratio is NOT shifted - it deliberately includes the
+    current bar's own move (net_move and path_length both run up to and
+    including bar T), because the question it answers is "has price
+    action up to and including right now been efficient", which needs
+    the current bar's contribution. This is not lookahead: everything it
+    uses is known by bar T's close, same as ATR (also unshifted).
 """
 
 from dataclasses import dataclass
@@ -58,14 +81,24 @@ from indicators import ema, atr, rolling_high, rolling_low
 class SignalConfig:
     ema_fast_period: int = 50
     ema_slow_period: int = 200
-    channel_period: int = 95  # was 20 in the original spec - see module docstring for why
+    channel_period: int = 20  # the original spec value - see module docstring for the history
     atr_period: int = 14
     spread_avg_window: int = 100
 
-    # Entry-filter additions - both OFF by default (matches the original spec)
+    # Entry-filter additions - all OFF by default (matches the original spec)
     use_volatility_filter: bool = False
     volatility_filter_window: int = 100      # ATR's own trailing-average window
     breakout_buffer_atr_fraction: float = 0.0  # e.g. 0.1 = must clear the level by 0.1x ATR
+
+    # Efficiency Ratio filter - backed by an actual diagnosed pattern (see
+    # module docstring), not a hypothesis. Window is FIXED at 20 to match
+    # exactly what the diagnostic validated - only the threshold should be
+    # swept, deliberately keeping this a single-parameter search rather
+    # than reopening a second free dimension (see the channel-length
+    # saga in README.md for why that's a real risk, not paranoia).
+    use_efficiency_filter: bool = False
+    efficiency_ratio_window: int = 20
+    efficiency_ratio_min_threshold: float = 0.3  # starting point - to be swept
 
 
 DEFAULT_SIGNAL_CONFIG = SignalConfig()
@@ -143,11 +176,28 @@ def prepare_instrument_frame(h1_df, h4_df, config=DEFAULT_SIGNAL_CONFIG):
     long_breakout_level = df["breakout_high"] + config.breakout_buffer_atr_fraction * df["atr"]
     short_breakout_level = df["breakout_low"] - config.breakout_buffer_atr_fraction * df["atr"]
 
+    # --- Optional Efficiency Ratio filter: only signal when price has been
+    # moving DIRECTIONALLY, not just churning. Kaufman's Efficiency Ratio:
+    #   ER = |net move over the window| / |sum of bar-to-bar moves over the window|
+    # ER near 1 = price moved efficiently in one direction (a real trend).
+    # ER near 0 = lots of back-and-forth with little net progress (chop).
+    # Deliberately NOT shifted - see the module docstring's NO LOOKAHEAD
+    # section for why that's still lookahead-safe.
+    if config.use_efficiency_filter:
+        window = config.efficiency_ratio_window
+        net_move = (df["Close"] - df["Close"].shift(window)).abs()
+        path_length = df["Close"].diff().abs().rolling(window).sum()
+        efficiency_ratio = net_move / path_length
+        df["efficiency_ratio"] = efficiency_ratio
+        efficiency_ok = efficiency_ratio > config.efficiency_ratio_min_threshold
+    else:
+        efficiency_ok = pd.Series(True, index=df.index)
+
     # --- The two mirrored technical entry rules, plus whichever optional
     # filters are enabled. (Rule 3 - spread - is checked in
     # risk_management.py, since it's a risk/execution concern rather than
     # "is there a technical setup".)
-    df["signal_long"] = df["trend_up"] & (df["Close"] > long_breakout_level) & volatility_ok
-    df["signal_short"] = df["trend_down"] & (df["Close"] < short_breakout_level) & volatility_ok
+    df["signal_long"] = df["trend_up"] & (df["Close"] > long_breakout_level) & volatility_ok & efficiency_ok
+    df["signal_short"] = df["trend_down"] & (df["Close"] < short_breakout_level) & volatility_ok & efficiency_ok
 
     return df

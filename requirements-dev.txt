@@ -1,0 +1,4 @@
+# Extra dependencies for running the test suite (tests/) - not needed to
+# run the backtest or live trading itself, see requirements.txt for that.
+-r requirements.txt
+pytest

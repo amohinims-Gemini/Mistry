@@ -39,11 +39,11 @@ Execution model (confirmed with the user before building this):
 
 import pandas as pd
 
-from instruments import INSTRUMENTS, value_per_price_unit
+from instruments import INSTRUMENTS, value_per_price_unit, notional_value_per_unit
 from risk_management import (
     PortfolioAccount, calculate_stop_and_target, calculate_position_size,
     spread_is_acceptable, data_is_stale, near_economic_announcement,
-    DEFAULT_CONFIG,
+    apply_breakeven_if_triggered, DEFAULT_CONFIG,
 )
 
 # Overnight financing "rollover" hour, in UTC. Real brokers roll over at
@@ -156,6 +156,12 @@ def run_backtest(instrument_frames, starting_cash=10_000, commission_per_trade=0
                     else:
                         exit_price, reason = position.take_profit_price, "take_profit"
                     account.close_position(symbol, ts, exit_price, reason, commission=commission_per_trade)
+                else:
+                    # Only check the breakeven-stop ratchet if the position
+                    # survived this bar - see apply_breakeven_if_triggered's
+                    # docstring for why this must never affect the outcome
+                    # of the SAME bar it's checked on.
+                    apply_breakeven_if_triggered(position, row["Bid_High"], row["Ask_Low"], config=config)
 
             # --- Step 3: look for a new entry, only if flat and nothing pending --
             if symbol not in account.open_positions and symbol not in pending_orders:
@@ -187,9 +193,10 @@ def run_backtest(instrument_frames, starting_cash=10_000, commission_per_trade=0
                         )
                         target_distance = config.take_profit_atr_multiple * row["atr"]
                         value_per_unit = value_per_price_unit(symbol, row["Close"])
+                        notional_per_unit = notional_value_per_unit(symbol, row["Close"])
                         size = calculate_position_size(
                             account.balance, stop_distance, value_per_unit, spec.min_units,
-                            row["Close"], config=config
+                            notional_per_unit, account.starting_cash, config=config
                         )
 
                         if size == 0:
@@ -214,10 +221,21 @@ def run_backtest(instrument_frames, starting_cash=10_000, commission_per_trade=0
             previous_ts_by_symbol[symbol] = ts
 
         # --- After every instrument at this timestamp: update shared account state
+        # NOTE: the account's real behavior (position sizing via account.balance,
+        # and the daily/weekly/drawdown circuit breakers below) uses REAL equity,
+        # financing included - that's genuine capital and should drive real
+        # decisions. trading_only_equity is recorded alongside purely for
+        # run_backtest.py's scoring, which deliberately excludes financing
+        # (a static, approximate rate - see risk_management.py's docstring).
         current_equity = account.equity(current_prices)
+        current_trading_only_equity = account.trading_only_equity(current_prices)
         account.handle_day_week_rollover(ts, current_equity)
         account.update_risk_flags(ts, current_equity)
-        equity_curve.append({"time": ts, "equity": current_equity, "balance": account.balance})
+        equity_curve.append({
+            "time": ts, "equity": current_equity, "balance": account.balance,
+            "trading_only_equity": current_trading_only_equity,
+            "trading_only_balance": account.trading_only_balance,
+        })
 
     # Force-close anything still open at the end of the data, at the last known
     # price, so trade accounting is complete. Tagged distinctly - these aren't
