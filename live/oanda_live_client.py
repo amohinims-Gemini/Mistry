@@ -103,16 +103,41 @@ def get_recent_closed_trades(count=20):
     return trades
 
 
-def place_market_order_with_stop(instrument, units, stop_loss_price, take_profit_price, price_precision):
+def place_market_order_with_stop(instrument, units, stop_distance, take_profit_price, price_precision):
     """
     Place a market order with a broker-held stop-loss AND take-profit
     attached in the SAME request, so OANDA creates them atomically with
     the fill - never a separate follow-up call that could fail or race.
 
     `units`: positive = buy (long), negative = sell (short).
-    `price_precision`: decimal places to round SL/TP to for this specific
-    instrument (see get_instrument_trading_specs - this varies per
-    instrument and a wrong value gets the order rejected).
+
+    `stop_distance`: the stop-loss as a DISTANCE from the eventual fill
+    price (already computed via risk_management.calculate_stop_and_target),
+    NOT an absolute price - a market order's exact fill price isn't known
+    until after it fills, so an absolute price computed in advance from
+    the last known close could end up stale versus the real fill (spread/
+    slippage/latency) and produce a nonsensical or rejected stop. OANDA
+    anchors a distance-based stop to the ACTUAL fill price itself,
+    preserving the intended R:R regardless of slippage - this also
+    matches how the rest of this project already represents stops
+    internally (distance first, converted to a price only once a fill
+    price is known - see backtest_engine.py).
+
+    `take_profit_price`: still an ABSOLUTE price, not a distance - OANDA's
+    v20 API only supports price-based take-profit orders (no distance
+    option, unlike stop-loss), so this is computed from the best
+    available reference price (the signal candle's close) at call time.
+    Slightly approximate for the same reason the stop-distance fix
+    exists, but a take-profit being off by a small amount is a
+    less-favorable-target risk, not a protection gap the way an
+    imprecise stop-loss would be - OANDA will simply reject the order
+    outright if this price is invalid relative to the real fill
+    direction, rather than silently accepting something dangerous.
+
+    `price_precision`: decimal places to round the stop distance/take-
+    profit price to for this specific instrument (see
+    get_instrument_trading_specs - this varies per instrument and a
+    wrong value gets the order rejected).
 
     Returns the raw OANDA response dict. Raises on request failure - the
     caller (order_execution.py) is responsible for verifying the stop
@@ -120,10 +145,17 @@ def place_market_order_with_stop(instrument, units, stop_loss_price, take_profit
     """
     client = get_live_client()
 
+    # NOTE: oandapyV20.contrib.requests.StopLossDetails's constructor only
+    # accepts `price`, not `distance`, even though OANDA's actual v20 REST
+    # API accepts a `distance` field on a StopLossOrder (this was found by
+    # testing - StopLossDetails(distance=...) raises TypeError locally,
+    # before ever reaching OANDA's server). Building the dict by hand for
+    # just this one field, bypassing the convenience wrapper, to get the
+    # behavior described in this function's docstring above.
     order = MarketOrderRequest(
         instrument=instrument,
         units=units,
-        stopLossOnFill=StopLossDetails(price=f"{stop_loss_price:.{price_precision}f}").data,
+        stopLossOnFill={"distance": f"{stop_distance:.{price_precision}f}", "timeInForce": "GTC"},
         takeProfitOnFill=TakeProfitDetails(price=f"{take_profit_price:.{price_precision}f}").data,
         clientExtensions={"tag": CLIENT_TAG, "comment": "Mistry automated entry"},
     )
