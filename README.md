@@ -72,6 +72,9 @@ either.** Summary (see "Tuning history" items 13+ for the full detail):
 | Daily trend-following (single timeframe) | Genuinely losing (test PF 0.65) and short of the trade-count minimum |
 | Daily mean-reversion (single timeframe) | Far short of the trade-count minimum; its "good" PF is a 13-trade sample, not signal |
 | 4H time-series momentum (8-point lookback sweep) | Every lookback failed outright - best test PF across the whole sweep was 0.966, still below breakeven |
+| Relative-value/pairs (EUR_USD vs GBP_USD spread, approximate check) | Weak structural evidence to begin with (spread barely more mean-reverting than either leg); phase-1 cheap check showed train/test in opposite directions with zero transaction costs modeled - not built out further |
+| AUD_USD on the existing 4H trend-following strategy | Clean fail, and worse than the existing 4-instrument basket (win rate 26-28%, below the ~33% breakeven the R:R needs) |
+| 4H trend-following R:R sweep (2:1 down to 1:1, stop fixed) | Win rate climbs cleanly as hypothesized (34.8%->52.5%) but profit factor stays flat (0.965-1.094) regardless - the higher win rate is paid for by proportionally smaller wins; best PF still well short of 1.2 |
 
 The systematic search across every entry-logic family tried so far
 (EMA-trend/channel-breakout, Bollinger/RSI mean-reversion, and raw
@@ -83,16 +86,22 @@ robustness in return, combining the two surviving 4H strategies made
 things worse rather than better despite genuinely uncorrelated trades
 (see item 17), and a completely different signal construction
 (momentum, item 21) landed in the same near-33%-win-rate, sub-1.0-PF
-territory as channel breakout did, across a wide range of lookbacks. The
-consistent convergence of unrelated constructions on the same mediocre
-outcome is itself informative - it points toward a hard limit somewhere
-in this instrument set / timeframe range / R:R combination, not a
-specific idea worth retrying with different parameters. Picking this
-back up would mean either a structurally different approach (e.g.
-relative-value/pairs trading between correlated instruments - flagged
-but not yet attempted, since it needs real architecture work: two-leg
-positions and resolving a direct conflict with the existing
-correlation-group exclusivity rule), or accepting the original 1H
+territory as channel breakout did, across a wide range of lookbacks.
+Since then, a relative-value/pairs approach (EUR_USD vs GBP_USD) checked
+out weak even at the cheap-approximation stage and wasn't built further
+(item 24), a fifth instrument (AUD_USD) failed more clearly than the
+existing basket on the same strategy (item 25), and a direct test of
+the R:R hypothesis - lower the target so the win rates actually being
+achieved (26-52%) can clear the profit-factor bar - found win rate
+climbing exactly as expected but profit factor staying flat regardless
+of R:R (item 26). The consistent convergence of unrelated instruments,
+signal constructions, AND payout structures on the same mediocre
+outcome is itself the finding - it points toward a hard limit somewhere
+in this general approach (systematic technical entry signals on retail
+FX majors at this trade frequency), not a specific idea, instrument, or
+parameter worth retrying. What's left unexplored: the full (not
+approximate) relative-value engine, a structurally different edge
+entirely (not a technical entry signal), or accepting the original 1H
 strategy's documented lack of robustness.
 
 ## The strategy
@@ -346,23 +355,75 @@ this history to preserve.
     the same place is itself evidence of a structural limit somewhere
     in this instrument set/timeframe/R:R combination, not a specific
     idea worth re-trying with different parameters.
-22. **The systematic search is on hold again** - three mechanically
+22. **The systematic search was paused again** - three mechanically
     distinct signal classes (trend/breakout, mean-reversion, time-series
     momentum), each tried across multiple timeframes, none robust. The
-    one structurally different idea not yet attempted is relative-value/
-    pairs trading between correlated instruments (e.g. EUR/USD vs.
-    GBP/USD) - flagged as the remaining option, not yet built, since it
-    needs real architecture work (two-leg positions, a spread/z-score
-    entry rule, and resolving a direct conflict with the existing
-    correlation-group exclusivity rule, which today treats EUR/USD and
-    GBP/USD as mutually exclusive - the opposite of what a pairs trade
-    needs).
+    one structurally different idea not yet attempted was relative-value/
+    pairs trading between correlated instruments.
+23. **Empirical check on the pairs idea, before building anything**:
+    EUR_USD/GBP_USD return correlation is 0.744 - clearly the best pair
+    available (USD_JPY: -0.46/-0.41 anti-correlated; XAU_USD: ~0.37
+    weak) - but the SPREAD's own mean-reversion structure checked out
+    weak on two independent measures: its 20-bar Efficiency Ratio (0.231)
+    was no lower than either leg's own (0.236/0.233 - the classic pairs-
+    trading rationale is that common-mode noise cancels, leaving a spread
+    that's MORE mean-reverting than the legs; that wasn't found here),
+    and an AR(1) half-life estimate came out to ~43 days - too slow to
+    obviously exploit at a 4H holding period.
+24. **A cheap phase-1 check before committing to the full two-leg engine**
+    (an approximate, close-only, zero-transaction-cost simulation of the
+    z-score/spread rule) confirmed the discouraging read: train was net
+    LOSING (PF 0.933) while test "passed" (PF 1.255) - train and test
+    pointing in opposite directions, a pattern this project has learned
+    to distrust regardless of which side looks good, and this ignored
+    real per-leg bid/ask costs entirely, which would likely erode the
+    apparent test edge further given how weak the underlying structural
+    evidence already was. Recommended NOT proceeding to the full,
+    realistic two-leg backtest engine on this basis - not built.
+25. **A fifth instrument, AUD_USD, tried on the existing (unmodified) 4H
+    trend-following strategy** - reusing 100% of the existing
+    infrastructure, just a new instrument. Failed more clearly than the
+    existing 4-instrument basket: win rate 26.4%/28.4% (train/test),
+    meaningfully BELOW the ~33% breakeven this 2:1 R:R needs, not just
+    short of it (vs. 39.3%/34.3% for the original basket's round-1
+    baseline). Data quality wasn't the issue (9,330 clean real candles).
+    Added `AUD_USD` to `instruments.py`'s registry permanently for this
+    check; introduced `PORTFOLIO_SYMBOLS` as an explicit separate
+    constant so the registry can hold instruments available for
+    standalone testing without silently pulling them into every existing
+    multi-instrument script the moment they're added (every `run_*.py`
+    entry point was looping over the full registry directly before this).
+26. **A direct test of the R:R hypothesis**: every variant of this
+    strategy had landed win rates around 26-52%, while the 2:1 R:R
+    baseline needs ~33%+ to break even - tested whether a less greedy
+    target lets the win rate actually achieved clear the profit-factor
+    bar. Swept R:R from 2:1 down to 1:1 (target multiple only, stop
+    fixed at the spec-literal 1.5x) on the 4-instrument 4H portfolio.
+    Win rate climbed exactly as hypothesized - 34.8% to 52.5%, clean and
+    monotonic - but profit factor did NOT follow, staying flat in a
+    0.965-1.094 band across the entire range: the higher win rate was
+    being paid for by proportionally smaller wins, netting out to
+    roughly the same edge (or lack of one) regardless of R:R. Best PF
+    across the whole sweep (1.094, at 1.25:1) still well short of 1.2.
+    Also flagged honestly: trade counts swung wildly and non-
+    monotonically across configs (27 to 220, no relationship to R:R) -
+    the same chaotic drawdown-suspension path-dependence documented in
+    item 10, meaning even the modest PF differences between configs
+    shouldn't be read as a real ranking. Nothing cleared the single
+    split, so nothing was stress-tested.
+27. **The systematic search is paused again** - see "Systematic
+    strategy search: on hold" above for the full comparison table across
+    every instrument, timeframe, signal class, and payout structure
+    tried. The consistent convergence of all of them on the same
+    mediocre outcome is now the headline finding, not any individual
+    result.
 
 **Bottom line:** every "this fixes it" moment in this history except the
 efficiency-ratio filter (item 9) was later found to be wrong or to not
 generalize, and the broader search across timeframes, a combined
-portfolio, and a genuinely different signal class (items 13-22) didn't
-find anything that did generalize either. The efficiency-ratio filter
+portfolio, a genuinely different signal class, a new instrument, and a
+direct test of the payout structure itself (items 13-27) didn't find
+anything that did generalize either. The efficiency-ratio filter
 remains the one piece of real, partially-
 validated signal found so far - not strong enough on its own to call any
 version of this strategy solved. Treat everything in this project as "as
@@ -562,7 +623,7 @@ results ever look unexpectedly off, check the run's output for a
 
 | File | Purpose |
 |---|---|
-| `instruments.py` | Per-instrument specs, pip/notional value math (incl. cross-currency), correlation group, spread cap, swap rates |
+| `instruments.py` | Per-instrument specs (now including `AUD_USD`, added for a standalone check - see "Tuning history" item 25), pip/notional value math (incl. cross-currency), correlation group, spread cap, swap rates; `PORTFOLIO_SYMBOLS` is the explicit 4-instrument list every multi-instrument script actually trades, kept separate from the full registry |
 | `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports H1/H4/D granularities |
 | `indicators.py` | EMA, ATR, rolling high/low channel, SMA, rolling std, RSI |
 | `signals.py` | Original 4H-trend/1H-entry trend-following strategy (merges the 4H trend filter onto the 1H timeline, no lookahead); `SignalConfig` holds all tunable entry-logic parameters |

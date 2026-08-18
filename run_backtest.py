@@ -32,7 +32,7 @@ Usage:
 
 import pandas as pd
 
-from instruments import INSTRUMENTS
+from instruments import INSTRUMENTS, PORTFOLIO_SYMBOLS
 from data_fetch import fetch_all
 from signals import prepare_instrument_frame, SignalConfig
 from backtest_engine import run_backtest
@@ -76,7 +76,7 @@ def build_all_frames(raw_data, signal_config=SignalConfig()):
     """Build each instrument's signal frame from already-fetched raw
     OANDA data, using the given SignalConfig."""
     frames = {}
-    for symbol in INSTRUMENTS:
+    for symbol in PORTFOLIO_SYMBOLS:
         h1 = raw_data[symbol]["H1"]
         h4 = raw_data[symbol]["H4"]
         frames[symbol] = prepare_instrument_frame(h1, h4, config=signal_config)
@@ -319,7 +319,7 @@ def main():
     print("historical-candles fetch (data_fetch.py).")
     print("=" * 78)
 
-    raw_data, is_synthetic = fetch_all(list(INSTRUMENTS.keys()))
+    raw_data, is_synthetic = fetch_all(PORTFOLIO_SYMBOLS)
     if is_synthetic:
         print(
             "\n*** NOTE: Using SYNTHETIC sample data (not real OANDA history), because "

@@ -17,7 +17,7 @@ wins, not the ~30% win rate / big-winner shape the other strategy has.
 A win rate near 33% here is a red flag, not a normal baseline.
 """
 
-from instruments import INSTRUMENTS
+from instruments import INSTRUMENTS, PORTFOLIO_SYMBOLS
 from data_fetch import fetch_all
 from mean_reversion_signals import prepare_instrument_frame, MeanReversionConfig
 from backtest_engine import run_backtest
@@ -70,7 +70,7 @@ EXPERIMENTS = [
 
 def build_all_frames(raw_data, mr_config=MeanReversionConfig()):
     frames = {}
-    for symbol in INSTRUMENTS:
+    for symbol in PORTFOLIO_SYMBOLS:
         h1 = raw_data[symbol]["H1"]
         h4 = raw_data[symbol]["H4"]
         frames[symbol] = prepare_instrument_frame(h1, h4, config=mr_config)
@@ -109,7 +109,7 @@ def main():
     print("(that was the trend-following strategy's expected shape, not this one's).")
     print("=" * 78)
 
-    raw_data, is_synthetic = fetch_all(list(INSTRUMENTS.keys()))
+    raw_data, is_synthetic = fetch_all(PORTFOLIO_SYMBOLS)
     if is_synthetic:
         print(
             "\n*** NOTE: Using SYNTHETIC sample data (not real OANDA history), because "

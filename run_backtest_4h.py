@@ -27,7 +27,7 @@ Usage:
     python run_backtest_4h.py
 """
 
-from instruments import INSTRUMENTS
+from instruments import INSTRUMENTS, PORTFOLIO_SYMBOLS
 from data_fetch import fetch_all
 from signals_4h import prepare_instrument_frame, Signal4HConfig
 from backtest_engine import run_backtest
@@ -59,27 +59,44 @@ from run_backtest import (
 # but only 116 combined trades (fails the 150 minimum); 1.25x clears
 # trade count (306) but PF is only 1.149, just short of 1.2.
 #
-# ROUND 3 (this sweep): searching the 1.0-1.3x region more finely for a
-# point that clears BOTH the trade-count and profit-factor bars at once -
-# still one free parameter (stop), target still fixed at 3.0x.
+# ROUND 3 (fine stop sweep, 1.0-1.3x, target fixed at 3.0x) result: noisy,
+# non-monotonic (1.0x->1.273, 1.05x->1.091, 1.1x->0.937, 1.15x->0.938,
+# 1.2x->1.184, 1.25x->1.149, 1.3x->1.071) - no clean winner, nothing
+# clearing both the trade-count and profit-factor bars at once. Not
+# pursued further at the time.
+#
+# ROUND 4 (this sweep): a different free parameter - reward:risk itself,
+# via the TARGET multiple, stop held at the spec-literal 1.5x (not the
+# round-2/3 tuned stop values, which were never themselves validated
+# beyond an unstressed single look - starting the new free parameter from
+# the last VALIDATED baseline, not an unvalidated one). Motivated by every
+# variant of this strategy landing win rates around 26-39%, while a 2:1
+# R:R needs ~33%+ to break even - testing whether a less greedy target
+# lets the win rate actually being achieved clear the profit-factor bar,
+# rather than assuming a higher win rate would follow from a closer
+# target (it may not - the 4H mean-reversion sweep found exactly that:
+# win rate rose with a wider stop, but profit factor didn't follow
+# proportionally). R:R swept from the 2:1 baseline down to 1:1.
 # =============================================================================
 
 BAR_DURATION_HOURS = 4
 
-TARGET_ATR_MULTIPLE = 3.0
-STOP_MULTIPLES_TO_TEST = [1.0, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3]
+STOP_ATR_MULTIPLE = 1.5  # spec-literal, fixed - target/R:R is this round's one free parameter
+RR_RATIOS_TO_TEST = [2.0, 1.75, 1.5, 1.25, 1.0]
 
 EXPERIMENTS = [
-    (f"stop {s}x / target {TARGET_ATR_MULTIPLE}x ATR" + (" (round 1 baseline)" if s == 1.5 else ""),
+    (f"R:R {rr}:1 (stop {STOP_ATR_MULTIPLE}x / target {STOP_ATR_MULTIPLE * rr:.3f}x ATR)"
+     + (" (round 1 baseline)" if rr == 2.0 else ""),
      Signal4HConfig(),
-     RiskConfig(stale_data_max_gap_hours=6, stop_loss_atr_multiple=s, take_profit_atr_multiple=TARGET_ATR_MULTIPLE))
-    for s in STOP_MULTIPLES_TO_TEST
+     RiskConfig(stale_data_max_gap_hours=6, stop_loss_atr_multiple=STOP_ATR_MULTIPLE,
+                take_profit_atr_multiple=STOP_ATR_MULTIPLE * rr))
+    for rr in RR_RATIOS_TO_TEST
 ]
 
 
 def build_all_frames(raw_data, config=Signal4HConfig()):
     frames = {}
-    for symbol in INSTRUMENTS:
+    for symbol in PORTFOLIO_SYMBOLS:
         h4 = raw_data[symbol]["H4"]
         frames[symbol] = prepare_instrument_frame(h4, config=config)
     return frames
@@ -118,7 +135,7 @@ def main():
     print("computed from the same 4H series (see signals_4h.py).")
     print("=" * 78)
 
-    raw_data, is_synthetic = fetch_all(list(INSTRUMENTS.keys()), granularities=("H4",))
+    raw_data, is_synthetic = fetch_all(PORTFOLIO_SYMBOLS, granularities=("H4",))
     if is_synthetic:
         print(
             "\n*** NOTE: Using SYNTHETIC sample data (not real OANDA history), because "

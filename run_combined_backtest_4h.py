@@ -31,7 +31,7 @@ Usage:
     python run_combined_backtest_4h.py
 """
 
-from instruments import INSTRUMENTS
+from instruments import INSTRUMENTS, PORTFOLIO_SYMBOLS
 from data_fetch import fetch_all
 from combined_signals_4h import build_combined_frame
 from signals_4h import Signal4HConfig
@@ -55,7 +55,7 @@ MR_TARGET_ATR_MULTIPLE = 1.0
 
 def build_all_frames(raw_data):
     frames = {}
-    for symbol in INSTRUMENTS:
+    for symbol in PORTFOLIO_SYMBOLS:
         h4 = raw_data[symbol]["H4"]
         frames[symbol] = build_combined_frame(
             h4,
@@ -111,7 +111,7 @@ def main():
     print("ONE shared account, sharing every existing risk/safety limit.")
     print("=" * 78)
 
-    raw_data, is_synthetic = fetch_all(list(INSTRUMENTS.keys()), granularities=("H4",))
+    raw_data, is_synthetic = fetch_all(PORTFOLIO_SYMBOLS, granularities=("H4",))
     if is_synthetic:
         print(
             "\n*** NOTE: Using SYNTHETIC sample data (not real OANDA history), because "

@@ -38,7 +38,7 @@ single-parameter discipline as every other sweep in this project.
 =============================================================================
 """
 
-from instruments import INSTRUMENTS
+from instruments import INSTRUMENTS, PORTFOLIO_SYMBOLS
 from data_fetch import fetch_all
 from signals_momentum_4h import prepare_instrument_frame, MomentumConfig
 from backtest_engine import run_backtest
@@ -62,7 +62,7 @@ EXPERIMENTS = [
 
 def build_all_frames(raw_data, config=MomentumConfig()):
     frames = {}
-    for symbol in INSTRUMENTS:
+    for symbol in PORTFOLIO_SYMBOLS:
         h4 = raw_data[symbol]["H4"]
         frames[symbol] = prepare_instrument_frame(h4, config=config)
     return frames
@@ -102,7 +102,7 @@ def main():
     print("or mean-reversion variant. See signals_momentum_4h.py.")
     print("=" * 78)
 
-    raw_data, is_synthetic = fetch_all(list(INSTRUMENTS.keys()), granularities=("H4",))
+    raw_data, is_synthetic = fetch_all(PORTFOLIO_SYMBOLS, granularities=("H4",))
     if is_synthetic:
         print(
             "\n*** NOTE: Using SYNTHETIC sample data (not real OANDA history), because "

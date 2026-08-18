@@ -24,7 +24,7 @@ as the 1H mean-reversion strategy - a win rate near 33% here is a red
 flag, not a normal baseline.
 """
 
-from instruments import INSTRUMENTS
+from instruments import INSTRUMENTS, PORTFOLIO_SYMBOLS
 from data_fetch import fetch_all
 from mean_reversion_signals_4h import prepare_instrument_frame, MeanReversion4HConfig
 from backtest_engine import run_backtest
@@ -66,7 +66,7 @@ EXPERIMENTS = [
 
 def build_all_frames(raw_data, mr_config=MeanReversion4HConfig()):
     frames = {}
-    for symbol in INSTRUMENTS:
+    for symbol in PORTFOLIO_SYMBOLS:
         h4 = raw_data[symbol]["H4"]
         frames[symbol] = prepare_instrument_frame(h4, config=mr_config)
     return frames
@@ -107,7 +107,7 @@ def main():
     print("here is a red flag, not a normal baseline.")
     print("=" * 78)
 
-    raw_data, is_synthetic = fetch_all(list(INSTRUMENTS.keys()), granularities=("H4",))
+    raw_data, is_synthetic = fetch_all(PORTFOLIO_SYMBOLS, granularities=("H4",))
     if is_synthetic:
         print(
             "\n*** NOTE: Using SYNTHETIC sample data (not real OANDA history), because "

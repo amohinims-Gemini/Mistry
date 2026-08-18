@@ -31,7 +31,7 @@ from dotenv import load_dotenv
 import oandapyV20
 import oandapyV20.endpoints.instruments as instruments_api
 
-from instruments import INSTRUMENTS
+from instruments import INSTRUMENTS, PORTFOLIO_SYMBOLS
 
 load_dotenv()
 
@@ -273,7 +273,7 @@ def fetch_all(instrument_symbols, granularities=("H1", "H4")):
 
 
 if __name__ == "__main__":
-    data, is_synthetic = fetch_all(list(INSTRUMENTS.keys()))
+    data, is_synthetic = fetch_all(PORTFOLIO_SYMBOLS)
     label = "SYNTHETIC" if is_synthetic else "REAL"
     print(f"\n=== {label} DATA SUMMARY ===")
     for symbol, tfs in data.items():
