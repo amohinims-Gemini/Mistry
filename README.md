@@ -337,15 +337,15 @@ re-suspending for another 30 days - a periodic "try again" pattern
 rather than a full recovery. See `PortfolioAccount.update_risk_flags()`
 in `risk_management.py`.
 
-## Live trading (execution plumbing built, plugged into an UNVALIDATED strategy)
+## Live trading (execution plumbing built AND verified against real OANDA, plugged into an UNVALIDATED strategy)
 
-The `live/` directory now has a complete demo-trading connector, built
+The `live/` directory has a complete demo-trading connector, built
 specifically to prove the execution plumbing (fetch price -> check
 signal -> size position -> place order -> log -> stop mechanism) works
 end-to-end, before any strategy has cleared this project's own
 validation bars - so that plumbing doesn't have to be built from scratch
-later. **`run_live.py` has been built but never actually run against
-OANDA** - see below before running it yourself.
+later. **This has now actually been run against the real OANDA practice
+server, including a real order** - see "What actually happened" below.
 
 - `account_safety.py` - hard, mandatory, 3-layer check that the
   connected account is genuinely PRACTICE/demo, never live (tested and
@@ -359,11 +359,17 @@ OANDA** - see below before running it yourself.
   until after it fills, so an advance price estimate could end up stale
   and produce a nonsensical or rejected stop (take-profit stays
   price-based - OANDA's API has no distance option for take-profit).
+  The distance value is built as a raw request dict by hand, NOT via
+  `oandapyV20`'s `StopLossDetails` convenience class - that class's
+  constructor only accepts `price`, not `distance` (found by actually
+  running this - see below), even though OANDA's real REST API accepts
+  a hand-built `distance` field just fine.
 - `live_state.py` - `LiveRiskState`, persisted to `live_data/state.json`
   so a restart doesn't lose the day's starting equity or the all-time
-  peak. Shares its day/week-rollover and drawdown-suspension LOGIC with
-  the backtest's `PortfolioAccount` via two functions extracted into
-  `risk_management.py` (`advance_day_week_rollover`, `advance_risk_flags`)
+  peak. Shares its day/week-rollover, drawdown-suspension, and
+  consecutive-loss-cooldown LOGIC with the backtest's `PortfolioAccount`
+  via functions extracted into `risk_management.py`
+  (`advance_day_week_rollover`, `advance_risk_flags`, `maybe_start_cooldown`)
   - one implementation of the circuit-breaker state machine, not two
   copies that could drift apart between backtest and live. Never tracks
   balance/NAV itself - OANDA's own numbers are always the source of truth.
@@ -381,8 +387,9 @@ OANDA** - see below before running it yourself.
   first built, now actually wired in). Verifies the stop-loss actually
   attached after every fill and force-closes immediately if not.
 - `live_logging.py` - one append-only JSONL line per cycle event to
-  `live_data/run_live.jsonl` (gitignored) - the audit trail for
-  confirming the plumbing worked end-to-end.
+  `live_data/run_live.jsonl` (gitignored) - the audit trail that actually
+  confirmed the plumbing worked end-to-end (see below - stdout itself
+  turned out not to be a reliable way to watch a redirected/background run).
 - `run_live.py` - the main loop. Plugs in `signals_4h.py` as a
   deliberately swappable PLACEHOLDER strategy - it failed this
   project's validation bars (see "Systematic strategy search: on hold"
@@ -392,15 +399,61 @@ OANDA** - see below before running it yourself.
   stop mechanisms: Ctrl+C (finishes the current cycle cleanly), a
   `live_data/STOP` kill-switch file (checked every cycle and every
   second while sleeping), and a default 24-hour max-runtime cap.
+- `manual_test_trade.py` - a standalone diagnostic (not part of the main
+  loop) that calls `order_execution.execute_signal()` directly - the
+  EXACT function `run_live.py` calls on a real signal - to force one
+  real order on demand, rather than waiting for the placeholder
+  strategy to happen to fire. Opens, verifies, and closes one trade.
+  Meant to be re-run after any future change to `order_execution.py`.
 
-**Not yet done**: an actual run against the OANDA practice server -
-everything above has been unit/smoke-tested offline (imports, state
-persistence round-trip, the leverage-cap math, the trade-gate logic) but
-never exercised against real OANDA endpoints. First real run should be
-watched closely, not left unattended, in case an OANDA field name or
-response shape differs from what was assumed while building this
-offline (see e.g. `live_account_sync.py`'s defensive fallback for a
-missing stop-loss field, added for exactly this reason).
+### What actually happened (first real run against the practice account)
+
+1. **`run_live.py` ran for 3 clean cycles** against the real account
+   (101-004-40015068-001, GBP, ~£100,000 balance) with no errors, then
+   was stopped deliberately via the `live_data/STOP` kill-switch -
+   confirming account verification, real candle fetch, and the
+   no-signal/reject-and-log path all work. Found along the way: Python
+   buffers `print()` output when stdout isn't an interactive terminal
+   (true for a background/redirected run), so the startup banner and
+   cycle logs weren't visible in real time - not a bug, but it meant the
+   JSONL audit log (which flushes on every event) turned out to be the
+   actually-reliable way to watch a run, not stdout.
+2. **A forced manual test trade surfaced a real bug on the first try**:
+   `oandapyV20.contrib.requests.StopLossDetails`'s constructor only
+   accepts `price`, not `distance`, and raised a plain `TypeError`
+   before the request ever reached OANDA - meaning the distance-based
+   stop-loss fix from the first build (see `oanda_live_client.py` above)
+   had never actually been reachable code. Fixed by building that one
+   field's request dict by hand instead of going through the convenience
+   wrapper.
+3. **A second test trade then succeeded completely**: EUR_USD long,
+   sized off the real account balance (141,276 units), stop-loss
+   attached at exactly `fill_price - stop_distance` (1.15513),
+   take-profit at exactly `fill_price + target_distance` (1.16306) -
+   independently reconfirmed via a second, separate `get_open_trades()`
+   call (not just `execute_signal()`'s own internal check) - then closed
+   immediately for a realized P&L of -£8.43 (spread cost of an instant
+   round-trip, as expected). Final account check: 0 open trades
+   remaining, balance down only that spread cost.
+4. **Current status: stopped, account clean, nothing trading
+   unattended.** `run_live.py` was stopped BEFORE the manual test ran
+   (not after), specifically to avoid any race between the bot's own
+   loop and the manual test both touching the same account at once.
+
+This confirms the execution path itself - account verification,
+real-time data fetch, real-balance-based sizing, order placement, and
+atomic stop-loss/take-profit attachment - genuinely works against
+OANDA's real practice server. It does NOT mean there's a strategy worth
+running with it: `signals_4h.py` is still the unvalidated placeholder
+throughout all of the above.
+
+A few OANDA response field-name assumptions (`stopLossOrder`, `NAV`,
+`marginUsed`, trade `id`) were confirmed correct by this real run;
+anything not exercised by these 3 cycles + 1 forced trade (e.g. a
+genuine consecutive-loss cooldown triggering, a drawdown suspension, a
+real signal firing on its own) remains unverified against the live API
+and should still be watched closely, not left unattended, the first
+time it happens.
 
 ## Known approximations (deliberate, and documented in the code)
 
