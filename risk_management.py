@@ -230,6 +230,131 @@ def near_economic_announcement(timestamp):
 
 
 # =============================================================================
+# Shared risk-state-machine logic (day/week rollover, drawdown suspension,
+# trade gating) - standalone functions, not PortfolioAccount methods, so
+# both the backtest (PortfolioAccount below) and the live connector
+# (live/live_state.py's LiveRiskState, live/live_account_sync.py) share
+# exactly ONE implementation instead of two copies that could quietly
+# drift apart. Each function takes a `state`-like object and just needs
+# the same attribute names PortfolioAccount already provides on self -
+# PortfolioAccount's own methods below simply delegate to these with
+# `self` as that state object.
+# =============================================================================
+
+def advance_day_week_rollover(state, timestamp, current_equity):
+    """Reset the daily/weekly loss counters at each new UTC calendar
+    day/week, and clear a consecutive-loss cooldown once its day has
+    passed. Must be called once per bar/cycle, in chronological order.
+    `state` needs: current_date, daily_start_equity, daily_halted,
+    current_week_key, weekly_start_equity, weekly_halted,
+    cooldown_until_date, consecutive_losses."""
+    new_date = timestamp.date()
+    if state.current_date != new_date:
+        state.current_date = new_date
+        state.daily_start_equity = current_equity
+        state.daily_halted = False
+        if state.cooldown_until_date is not None and new_date >= state.cooldown_until_date:
+            state.cooldown_until_date = None
+            state.consecutive_losses = 0
+
+    week_key = timestamp.isocalendar()[:2]  # (ISO year, ISO week number)
+    if state.current_week_key != week_key:
+        state.current_week_key = week_key
+        state.weekly_start_equity = current_equity
+        state.weekly_halted = False
+
+
+def advance_risk_flags(state, timestamp, current_equity, config=DEFAULT_CONFIG):
+    """Check the daily loss limit, weekly loss limit, and drawdown
+    suspension against current equity. Call after advance_day_week_rollover
+    (and after marking positions to market/fetching real NAV) at every
+    bar/cycle. `state` needs everything advance_day_week_rollover needs,
+    plus: peak_equity, drawdown_suspended, drawdown_suspended_since."""
+    cfg = config
+
+    if not state.daily_halted and state.daily_start_equity > 0:
+        daily_change = (current_equity - state.daily_start_equity) / state.daily_start_equity
+        if daily_change <= -cfg.daily_loss_limit_pct:
+            state.daily_halted = True
+
+    if not state.weekly_halted and state.weekly_start_equity > 0:
+        weekly_change = (current_equity - state.weekly_start_equity) / state.weekly_start_equity
+        if weekly_change <= -cfg.weekly_loss_limit_pct:
+            state.weekly_halted = True
+
+    state.peak_equity = max(state.peak_equity, current_equity)
+    if state.peak_equity > 0:
+        drawdown = (state.peak_equity - current_equity) / state.peak_equity
+
+        if not state.drawdown_suspended and drawdown >= cfg.drawdown_suspend_pct:
+            state.drawdown_suspended = True
+            state.drawdown_suspended_since = timestamp
+
+        elif state.drawdown_suspended:
+            # See PortfolioAccount.update_risk_flags's original docstring
+            # (git history) for the reasoning behind resuming on EITHER
+            # equity recovery OR a fixed cooldown, whichever comes first.
+            recovered = drawdown <= cfg.drawdown_resume_pct
+            cooldown_elapsed = (
+                state.drawdown_suspended_since is not None
+                and (timestamp - state.drawdown_suspended_since).days >= cfg.drawdown_suspend_max_cooldown_days
+            )
+            if recovered or cooldown_elapsed:
+                state.drawdown_suspended = False
+                state.drawdown_suspended_since = None
+
+
+def maybe_start_cooldown(state, current_date, config=DEFAULT_CONFIG):
+    """Start the consecutive-loss cooldown if `state.consecutive_losses`
+    has just reached the limit and a cooldown isn't already active.
+    `state` needs: consecutive_losses, cooldown_until_date. Shared by
+    PortfolioAccount.close_position (backtest, called at the moment a
+    losing trade closes) and the live loop (called once per cycle, after
+    consecutive_losses is refreshed from real closed-trade history - see
+    live/live_account_sync.get_fresh_consecutive_losses). This is the
+    ONLY place cooldown_until_date ever gets SET (advance_day_week_rollover
+    only clears it once its date has passed) - found missing entirely
+    from the live connector's first draft while reviewing it: live never
+    called anything equivalent to close_position, so the consecutive-loss
+    cooldown gate existed in check_trade_gates but could never actually
+    trigger live."""
+    if state.consecutive_losses >= config.consecutive_loss_limit and state.cooldown_until_date is None:
+        state.cooldown_until_date = current_date + dt.timedelta(days=1)
+
+
+def check_trade_gates(symbol, state, open_positions, correlation_groups_open, config=DEFAULT_CONFIG):
+    """All the account-state gates a signal must clear before we even
+    size it. `state` needs: drawdown_suspended, daily_halted,
+    weekly_halted, cooldown_until_date. `open_positions` is
+    {symbol: object_with_a_risk_pct_attribute} - a real Position in the
+    backtest, a live/live_account_sync.py LivePosition live. Returns
+    (True, None) or (False, reason_string)."""
+    cfg = config
+    spec = INSTRUMENTS[symbol]
+
+    if state.drawdown_suspended:
+        return False, "drawdown_suspended"
+    if state.daily_halted:
+        return False, "daily_loss_limit"
+    if state.weekly_halted:
+        return False, "weekly_loss_limit"
+    if state.cooldown_until_date is not None:
+        return False, "consecutive_loss_cooldown"
+    if symbol in open_positions:
+        return False, "already_open"
+    if len(open_positions) >= cfg.max_open_positions:
+        return False, "max_open_positions"
+    if spec.correlation_group in correlation_groups_open:
+        return False, "correlation_limit"
+
+    current_open_risk_pct = sum(p.risk_pct for p in open_positions.values())
+    if current_open_risk_pct + cfg.risk_per_trade_pct > cfg.total_open_risk_cap_pct + 1e-9:
+        return False, "total_open_risk_cap"
+
+    return True, None
+
+
+# =============================================================================
 # Position record + the shared portfolio account
 # =============================================================================
 
@@ -379,94 +504,29 @@ class PortfolioAccount:
     def handle_day_week_rollover(self, timestamp, current_equity):
         """Reset the daily/weekly loss counters at each new UTC calendar
         day/week, and clear a consecutive-loss cooldown once its day has
-        passed. Must be called once per bar, in chronological order."""
-        new_date = timestamp.date()
-        if self.current_date != new_date:
-            self.current_date = new_date
-            self.daily_start_equity = current_equity
-            self.daily_halted = False
-            if self.cooldown_until_date is not None and new_date >= self.cooldown_until_date:
-                self.cooldown_until_date = None
-                self.consecutive_losses = 0
-
-        week_key = timestamp.isocalendar()[:2]  # (ISO year, ISO week number)
-        if self.current_week_key != week_key:
-            self.current_week_key = week_key
-            self.weekly_start_equity = current_equity
-            self.weekly_halted = False
+        passed. Must be called once per bar, in chronological order.
+        Delegates to the module-level advance_day_week_rollover() so the
+        backtest and the live connector share one implementation - see
+        that function's docstring."""
+        advance_day_week_rollover(self, timestamp, current_equity)
 
     def update_risk_flags(self, timestamp, current_equity):
         """Check the daily loss limit, weekly loss limit, and drawdown
         suspension against current equity. Call after handle_day_week_rollover
-        (and after marking positions to market) at every bar."""
-        cfg = self.config
-
-        if not self.daily_halted and self.daily_start_equity > 0:
-            daily_change = (current_equity - self.daily_start_equity) / self.daily_start_equity
-            if daily_change <= -cfg.daily_loss_limit_pct:
-                self.daily_halted = True
-
-        if not self.weekly_halted and self.weekly_start_equity > 0:
-            weekly_change = (current_equity - self.weekly_start_equity) / self.weekly_start_equity
-            if weekly_change <= -cfg.weekly_loss_limit_pct:
-                self.weekly_halted = True
-
-        self.peak_equity = max(self.peak_equity, current_equity)
-        if self.peak_equity > 0:
-            drawdown = (self.peak_equity - current_equity) / self.peak_equity
-
-            if not self.drawdown_suspended and drawdown >= cfg.drawdown_suspend_pct:
-                self.drawdown_suspended = True
-                self.drawdown_suspended_since = timestamp
-
-            elif self.drawdown_suspended:
-                # Resume on EITHER equity recovering back to within
-                # drawdown_resume_pct of peak (a lower threshold than the
-                # one that triggered suspension - hysteresis, so it
-                # doesn't flip every bar right at the boundary), OR the
-                # fixed cooldown elapsing, whichever comes first. The
-                # cooldown fallback exists because equity-recovery alone
-                # can never fire if there's nothing left open to move
-                # equity (the only lever is trading, and trading is
-                # exactly what's blocked) - a real deadlock this strategy
-                # hit in practice with the original permanent-halt design.
-                recovered = drawdown <= cfg.drawdown_resume_pct
-                cooldown_elapsed = (
-                    self.drawdown_suspended_since is not None
-                    and (timestamp - self.drawdown_suspended_since).days >= cfg.drawdown_suspend_max_cooldown_days
-                )
-                if recovered or cooldown_elapsed:
-                    self.drawdown_suspended = False
-                    self.drawdown_suspended_since = None
+        (and after marking positions to market) at every bar. Delegates
+        to the module-level advance_risk_flags() - see that function's
+        docstring, including the resume-on-recovery-or-cooldown reasoning
+        and the deadlock it fixes."""
+        advance_risk_flags(self, timestamp, current_equity, config=self.config)
 
     # --- Trade gating ---------------------------------------------------------
 
     def can_open_new_trade(self, symbol):
         """All the account-state gates a signal must clear before we even
-        size it. Returns (True, None) or (False, reason_string)."""
-        cfg = self.config
-        spec = INSTRUMENTS[symbol]
-
-        if self.drawdown_suspended:
-            return False, "drawdown_suspended"
-        if self.daily_halted:
-            return False, "daily_loss_limit"
-        if self.weekly_halted:
-            return False, "weekly_loss_limit"
-        if self.cooldown_until_date is not None:
-            return False, "consecutive_loss_cooldown"
-        if symbol in self.open_positions:
-            return False, "already_open"
-        if len(self.open_positions) >= cfg.max_open_positions:
-            return False, "max_open_positions"
-        if spec.correlation_group in self.correlation_groups_open:
-            return False, "correlation_limit"
-
-        current_open_risk_pct = sum(p.risk_pct for p in self.open_positions.values())
-        if current_open_risk_pct + cfg.risk_per_trade_pct > cfg.total_open_risk_cap_pct + 1e-9:
-            return False, "total_open_risk_cap"
-
-        return True, None
+        size it. Returns (True, None) or (False, reason_string). Delegates
+        to the module-level check_trade_gates() - see that function's
+        docstring."""
+        return check_trade_gates(symbol, self, self.open_positions, self.correlation_groups_open, config=self.config)
 
     def record_rejection(self, timestamp, symbol, reason):
         self.rejection_log.append({"time": timestamp, "symbol": symbol, "reason": reason})
@@ -502,8 +562,7 @@ class PortfolioAccount:
 
         if pnl < 0:
             self.consecutive_losses += 1
-            if self.consecutive_losses >= cfg.consecutive_loss_limit and self.cooldown_until_date is None:
-                self.cooldown_until_date = exit_time.date() + dt.timedelta(days=1)
+            maybe_start_cooldown(self, exit_time.date(), config=cfg)
         else:
             self.consecutive_losses = 0
 

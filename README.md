@@ -337,20 +337,70 @@ re-suspending for another 30 days - a periodic "try again" pattern
 rather than a full recovery. See `PortfolioAccount.update_risk_flags()`
 in `risk_management.py`.
 
-## Live trading (paused, incomplete)
+## Live trading (execution plumbing built, plugged into an UNVALIDATED strategy)
 
-A `live/` directory exists with the start of a live-demo-trading
-connector: `account_safety.py` (a hard, mandatory, 3-layer check that
-the connected account is genuinely a PRACTICE/demo account, never live -
-tested and working) and `oanda_live_client.py` (the only place beyond
-`data_fetch.py` that talks to OANDA - account state, open trades, and
-order placement with an attached stop-loss). **This is unfinished**:
-`live_state.py`, `live_account_sync.py`, `order_execution.py`,
-`live_logging.py`, and the main `run_live.py` loop were never built -
-work paused to investigate the sizing bugs and strategy weaknesses
-documented above instead. Do not attempt to run anything from `live/` -
-most of it doesn't exist yet, and what does exist has never placed an
-order.
+The `live/` directory now has a complete demo-trading connector, built
+specifically to prove the execution plumbing (fetch price -> check
+signal -> size position -> place order -> log -> stop mechanism) works
+end-to-end, before any strategy has cleared this project's own
+validation bars - so that plumbing doesn't have to be built from scratch
+later. **`run_live.py` has been built but never actually run against
+OANDA** - see below before running it yourself.
+
+- `account_safety.py` - hard, mandatory, 3-layer check that the
+  connected account is genuinely PRACTICE/demo, never live (tested and
+  working, no bypass).
+- `oanda_live_client.py` - the only place beyond `data_fetch.py` that
+  talks to OANDA: account state, real per-instrument margin rate/
+  precision, open trades, recent closed trades, order placement with an
+  atomically-attached stop-loss/take-profit, force-close. The stop-loss
+  is placed as a DISTANCE from the fill price, not an absolute price
+  computed in advance - a market order's exact fill price isn't known
+  until after it fills, so an advance price estimate could end up stale
+  and produce a nonsensical or rejected stop (take-profit stays
+  price-based - OANDA's API has no distance option for take-profit).
+- `live_state.py` - `LiveRiskState`, persisted to `live_data/state.json`
+  so a restart doesn't lose the day's starting equity or the all-time
+  peak. Shares its day/week-rollover and drawdown-suspension LOGIC with
+  the backtest's `PortfolioAccount` via two functions extracted into
+  `risk_management.py` (`advance_day_week_rollover`, `advance_risk_flags`)
+  - one implementation of the circuit-breaker state machine, not two
+  copies that could drift apart between backtest and live. Never tracks
+  balance/NAV itself - OANDA's own numbers are always the source of truth.
+- `live_account_sync.py` - reconciles local expectations against
+  OANDA's real open trades/balance/NAV each cycle; a mismatch (e.g. an
+  untracked open trade, a missing stop-loss field) is a loud logged
+  warning, never a silent "correction." Consecutive-loss count is
+  derived fresh from real closed-trade history each cycle rather than
+  tracked as fragile local state.
+- `order_execution.py` - sizes a trade using the exact same
+  `calculate_stop_and_target`/`calculate_position_size` functions the
+  backtest uses (no reimplementation), capped at the STRICTER of this
+  project's 30:1 policy leverage or OANDA's real per-instrument margin
+  rate (Gold's real cap, 20:1, is stricter - flagged when the client was
+  first built, now actually wired in). Verifies the stop-loss actually
+  attached after every fill and force-closes immediately if not.
+- `live_logging.py` - one append-only JSONL line per cycle event to
+  `live_data/run_live.jsonl` (gitignored) - the audit trail for
+  confirming the plumbing worked end-to-end.
+- `run_live.py` - the main loop. Plugs in `signals_4h.py` as a
+  deliberately swappable PLACEHOLDER strategy - it failed this
+  project's validation bars (see "Systematic strategy search: on hold"
+  above) and every startup banner/log line says so; this run exists to
+  prove the plumbing, not to trade profitably. Polls every 5 minutes,
+  only acting on a genuinely new closed 4H candle. Three independent
+  stop mechanisms: Ctrl+C (finishes the current cycle cleanly), a
+  `live_data/STOP` kill-switch file (checked every cycle and every
+  second while sleeping), and a default 24-hour max-runtime cap.
+
+**Not yet done**: an actual run against the OANDA practice server -
+everything above has been unit/smoke-tested offline (imports, state
+persistence round-trip, the leverage-cap math, the trade-gate logic) but
+never exercised against real OANDA endpoints. First real run should be
+watched closely, not left unattended, in case an OANDA field name or
+response shape differs from what was assumed while building this
+offline (see e.g. `live_account_sync.py`'s defensive fallback for a
+missing stop-loss field, added for exactly this reason).
 
 ## Known approximations (deliberate, and documented in the code)
 
@@ -373,10 +423,12 @@ order.
   scored backtest metrics for exactly this reason (see "Tuning history").
 - **Rollover hour** fixed at 21:00 UTC year-round, not adjusted for US
   daylight saving.
-- **Leverage cap (30:1)** is a realistic-but-arbitrary retail limit for
-  scoring purposes; not fetched from OANDA's actual margin rules for a
-  given account (real per-instrument margin rates were checked once
-  live for the `live/` connector - Gold's real cap is stricter, 20:1).
+- **Leverage cap (30:1)** in the BACKTEST is a realistic-but-arbitrary
+  retail limit for scoring purposes; not fetched from OANDA's actual
+  margin rules (backtesting 4 fixed instruments doesn't warrant a live
+  API call per run). The LIVE connector (`live/order_execution.py`)
+  does use OANDA's real per-instrument margin rate, taking the stricter
+  of it and this 30:1 policy cap - Gold's real cap is stricter, 20:1.
 - **Fill/exit modeling**: signals are evaluated on a closed 1H candle;
   orders fill at the next candle's open (ask for buys, bid for sells)
   plus ATR-scaled slippage. Take-profit fills assume no slippage (limit-
@@ -427,5 +479,5 @@ results ever look unexpectedly off, check the run's output for a
 | `run_mean_reversion_backtest.py` / `run_mean_reversion_backtest_4h.py` / `run_mean_reversion_backtest_daily.py` | Entry points for the 1H / 4H / daily mean-reversion strategies |
 | `run_combined_backtest_4h.py` | Entry point for the combined 4H trend-following + mean-reversion portfolio |
 | `tests/` | pytest suite - currently covers currency-conversion/position-sizing math (`requirements-dev.txt`) |
-| `live/` | Incomplete, paused live-demo-trading connector - see "Live trading" above |
+| `live/` | Demo-trading execution connector (built, not yet run against real OANDA endpoints) - see "Live trading" above |
 | `.env.example` | Template for the environment variables `data_fetch.py`/`live/` need - copy to `.env` |
