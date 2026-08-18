@@ -56,9 +56,11 @@ unflattering story of how this was found out.
 Beyond the original 1H strategy above, this project tried a wide sweep
 of alternatives - a from-scratch mean-reversion strategy, single-
 timeframe 4H versions of both trend-following and mean-reversion, a
-combined 4H portfolio running both at once, and single-timeframe daily
-versions of both. **None of them cleared the validation bars either.**
-Summary (see "Tuning history" items 13+ for the full detail):
+combined 4H portfolio running both at once, single-timeframe daily
+versions of both, and (a genuinely different signal class, not a
+timeframe variant of the first two) time-series momentum on 4H, swept
+across 8 lookback windows. **None of them cleared the validation bars
+either.** Summary (see "Tuning history" items 13+ for the full detail):
 
 | Timeframe / strategy | Outcome |
 |---|---|
@@ -69,16 +71,29 @@ Summary (see "Tuning history" items 13+ for the full detail):
 | 4H combined portfolio (both at once) | Worse than either alone - shared-slot crowding, not diversification |
 | Daily trend-following (single timeframe) | Genuinely losing (test PF 0.65) and short of the trade-count minimum |
 | Daily mean-reversion (single timeframe) | Far short of the trade-count minimum; its "good" PF is a 13-trade sample, not signal |
+| 4H time-series momentum (8-point lookback sweep) | Every lookback failed outright - best test PF across the whole sweep was 0.966, still below breakeven |
 
-The systematic search across this entry-logic family (EMA-trend/
-channel-breakout and Bollinger/RSI mean-reversion, at every timeframe
-tried) is **on hold** as of this point - not because any one bug was
-found, but because moving to a lower-noise timeframe (4H, then daily)
-consistently traded away edge without producing robustness in return,
-and combining the two surviving 4H strategies made things worse rather
-than better despite genuinely uncorrelated trades (see item 17). Picking
-this back up would mean either a genuinely different signal class, or
-accepting the original 1H strategy's documented lack of robustness.
+The systematic search across every entry-logic family tried so far
+(EMA-trend/channel-breakout, Bollinger/RSI mean-reversion, and raw
+time-series momentum - three mechanically distinct signal classes, not
+variations on one idea) is **on hold** as of this point - not because
+any one bug was found, but because moving to a lower-noise timeframe
+(4H, then daily) consistently traded away edge without producing
+robustness in return, combining the two surviving 4H strategies made
+things worse rather than better despite genuinely uncorrelated trades
+(see item 17), and a completely different signal construction
+(momentum, item 21) landed in the same near-33%-win-rate, sub-1.0-PF
+territory as channel breakout did, across a wide range of lookbacks. The
+consistent convergence of unrelated constructions on the same mediocre
+outcome is itself informative - it points toward a hard limit somewhere
+in this instrument set / timeframe range / R:R combination, not a
+specific idea worth retrying with different parameters. Picking this
+back up would mean either a structurally different approach (e.g.
+relative-value/pairs trading between correlated instruments - flagged
+but not yet attempted, since it needs real architecture work: two-leg
+positions and resolving a direct conflict with the existing
+correlation-group exclusivity rule), or accepting the original 1H
+strategy's documented lack of robustness.
 
 ## The strategy
 
@@ -305,17 +320,50 @@ this history to preserve.
     removed too much of the opportunity set, and trend-following's
     edge went negative rather than staying flat. Neither cleared the
     single split, so neither was stress-tested.
-20. **The systematic search is now on hold** - see "Systematic strategy
-    search: on hold" above for the full comparison table. Every
-    timeframe tried (1H, 4H, daily) on both entry-logic families
-    (trend-following, mean-reversion), individually and combined,
-    failed to clear the validation bars robustly.
+20. **The systematic search was put on hold** - every timeframe tried
+    (1H, 4H, daily) on both entry-logic families (trend-following,
+    mean-reversion), individually and combined, had failed to clear the
+    validation bars robustly.
+21. **Resumed with a genuinely different signal class**: time-series
+    momentum (`signals_momentum_4h.py`) - long/short off the SIGN of the
+    trailing N-bar return, not any specific price level being crossed
+    (unlike channel breakout or an EMA crossover) and not a distance-
+    from-a-band measure (unlike mean-reversion). Round 1 (lookback=20
+    bars, matching the channel strategy's window for comparability,
+    spec-literal 1.5x/3.0x ATR stop/target) failed outright: test PF
+    0.771, test return -4.57%, though it comfortably cleared the trade-
+    count minimum (433 trades) since a signal defined by sign-of-return
+    is active almost continuously, unlike the sparser breakout/reversion
+    signals. An 8-point lookback sweep (5 to 100 bars) found no
+    survivors - every single lookback failed, best test PF across the
+    whole sweep only 0.966 (still below breakeven), with a noisy,
+    non-monotonic drawdown pattern across lookbacks (3.67% to 20.15%)
+    showing no coherent structure to chase. Not stress-tested - nothing
+    cleared the single split. Notably, this mechanically unrelated
+    signal construction converged on the SAME rough shape as channel
+    breakout (win rate hugging ~28-35%, near the ~33% breakeven this
+    2:1 R:R needs) - three now-independent signal classes landing in
+    the same place is itself evidence of a structural limit somewhere
+    in this instrument set/timeframe/R:R combination, not a specific
+    idea worth re-trying with different parameters.
+22. **The systematic search is on hold again** - three mechanically
+    distinct signal classes (trend/breakout, mean-reversion, time-series
+    momentum), each tried across multiple timeframes, none robust. The
+    one structurally different idea not yet attempted is relative-value/
+    pairs trading between correlated instruments (e.g. EUR/USD vs.
+    GBP/USD) - flagged as the remaining option, not yet built, since it
+    needs real architecture work (two-leg positions, a spread/z-score
+    entry rule, and resolving a direct conflict with the existing
+    correlation-group exclusivity rule, which today treats EUR/USD and
+    GBP/USD as mutually exclusive - the opposite of what a pairs trade
+    needs).
 
 **Bottom line:** every "this fixes it" moment in this history except the
 efficiency-ratio filter (item 9) was later found to be wrong or to not
-generalize, and the broader search across timeframes and a combined
-portfolio (items 13-19) didn't find anything that did generalize either.
-The efficiency-ratio filter remains the one piece of real, partially-
+generalize, and the broader search across timeframes, a combined
+portfolio, and a genuinely different signal class (items 13-22) didn't
+find anything that did generalize either. The efficiency-ratio filter
+remains the one piece of real, partially-
 validated signal found so far - not strong enough on its own to call any
 version of this strategy solved. Treat everything in this project as "as
 honest as we know how to make it," not "proven to work."
@@ -524,6 +572,7 @@ results ever look unexpectedly off, check the run's output for a
 | `mean_reversion_signals_4h.py` | Single-timeframe 4H mean-reversion - entry and trend-avoidance filter both on the same 4H series; `MeanReversion4HConfig` |
 | `mean_reversion_signals_daily.py` | Single-timeframe daily mean-reversion, same structure as the 4H version; `MeanReversionDailyConfig` |
 | `combined_signals_4h.py` | Merges the 4H trend-following and mean-reversion signal frames per instrument into one combined frame, for running both out of one shared account (see "Tuning history" item 17) |
+| `signals_momentum_4h.py` | Single-timeframe 4H time-series momentum - long/short off the sign of the trailing N-bar return, a genuinely different signal class from breakout/mean-reversion (see "Tuning history" item 21); `MomentumConfig` |
 | `risk_management.py` | Position sizing (with leverage cap) + `PortfolioAccount`: every safety limit, breakeven-stop trade management, shared across all instruments; `RiskConfig` holds all tunable risk parameters |
 | `econ_calendar.py` | The approximate news-blackout heuristic (swappable) - a documented no-op at daily granularity, see "Known approximations" |
 | `backtest_engine.py` | The custom multi-instrument, chronological-lockstep backtest simulator; `bar_duration_hours` parameter makes the financing-rollover check correct at any granularity, and a frame may optionally carry per-row `stop_distance_override`/`target_distance_override`/`signal_source` columns (used by `combined_signals_4h.py`) |
@@ -531,6 +580,7 @@ results ever look unexpectedly off, check the run's output for a
 | `run_backtest_4h.py` / `run_backtest_daily.py` | Entry points for the single-timeframe 4H / daily trend-following strategies |
 | `run_mean_reversion_backtest.py` / `run_mean_reversion_backtest_4h.py` / `run_mean_reversion_backtest_daily.py` | Entry points for the 1H / 4H / daily mean-reversion strategies |
 | `run_combined_backtest_4h.py` | Entry point for the combined 4H trend-following + mean-reversion portfolio |
+| `run_momentum_backtest_4h.py` | Entry point for the 4H time-series momentum strategy, including its lookback sweep |
 | `tests/` | pytest suite - currently covers currency-conversion/position-sizing math (`requirements-dev.txt`) |
-| `live/` | Demo-trading execution connector (built, not yet run against real OANDA endpoints) - see "Live trading" above |
+| `live/` | Demo-trading execution connector - built AND verified against the real OANDA practice server (a real order placed, sized, protected, and closed successfully) - see "Live trading" above |
 | `.env.example` | Template for the environment variables `data_fetch.py`/`live/` need - copy to `.env` |
