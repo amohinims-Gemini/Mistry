@@ -35,6 +35,16 @@ Execution model (confirmed with the user before building this):
     limit order - you get that price or better in real markets).
     Stop-loss and entry fills DO get slippage (they behave like market
     orders reacting to price crossing a level).
+
+A signal frame may optionally carry `stop_distance_override` /
+`target_distance_override` columns to use a per-row stop/target distance
+instead of this run's single global RiskConfig ATR multiple - added for
+combined_signals_4h.py, where two different strategies (with two
+different tuned R:Rs) share one instrument's frame. Absent in every
+single-strategy frame, so existing behavior is unchanged unless a frame
+opts in. A frame may also carry a `signal_source` column, propagated
+onto each Position/trade record purely for reporting/attribution - it
+has no effect on execution.
 """
 
 import pandas as pd
@@ -78,17 +88,27 @@ def _slip(price, direction, amount):
     return price + amount if direction == "long" else price - amount
 
 
-def run_backtest(instrument_frames, starting_cash=10_000, commission_per_trade=0.0, config=DEFAULT_CONFIG):
+def run_backtest(instrument_frames, starting_cash=10_000, commission_per_trade=0.0,
+                  config=DEFAULT_CONFIG, bar_duration_hours=1):
     """
     Run the full multi-instrument backtest.
 
     `instrument_frames`: {symbol: DataFrame} - each already produced by
-    signals.prepare_instrument_frame() and already sliced to the desired
+    a strategy's prepare_instrument_frame() (signals.py, signals_4h.py,
+    mean_reversion_signals.py, ...) and already sliced to the desired
     date range (e.g. the training or testing period).
 
     `config`: a risk_management.RiskConfig - all the tunable risk/safety
     numbers. Defaults to the spec's original values; pass a different
     RiskConfig to try a variation (see run_backtest.py's experiment runner).
+
+    `bar_duration_hours`: how many hours each bar in instrument_frames
+    covers - 1 for the 1H strategies (signals.py, mean_reversion_signals.py),
+    4 for the single-timeframe 4H strategy (signals_4h.py). Used ONLY to
+    correctly detect whether the overnight financing rollover hour falls
+    within a given bar - see the ROLLOVER_HOUR_UTC check below, which
+    would silently never fire at 4H granularity without this (4H bars
+    land on hours 0/4/8/12/16/20, never exactly on hour 21).
 
     Returns a dict with the account, a trade log, a rejection log, and
     the shared equity curve.
@@ -130,14 +150,20 @@ def run_backtest(instrument_frames, starting_cash=10_000, commission_per_trade=0
                     take_profit_price = fill_price - order["target_distance"]
 
                 account.open_position(
-                    symbol, direction, ts, fill_price, order["size"], stop_price, take_profit_price
+                    symbol, direction, ts, fill_price, order["size"], stop_price, take_profit_price,
+                    signal_source=order["signal_source"],
                 )
 
             # --- Step 2: manage an open position (financing, then SL/TP) --------
             if symbol in account.open_positions:
                 position = account.open_positions[symbol]
 
-                if ts.hour == ROLLOVER_HOUR_UTC:
+                # Does this bar's span [ts, ts + bar_duration_hours) cover the
+                # rollover hour? For 1H bars this reduces to the exact-hour
+                # match used previously; for 4H bars (which land on hours
+                # 0/4/8/12/16/20) it correctly catches the bar covering it
+                # (e.g. the 20:00 bar covers hour 21) instead of never firing.
+                if ts.hour <= ROLLOVER_HOUR_UTC < ts.hour + bar_duration_hours:
                     notional_value = position.size_units * row["Close"]
                     account.apply_financing(symbol, ts, notional_value, position.direction)
 
@@ -188,10 +214,25 @@ def run_backtest(instrument_frames, starting_cash=10_000, commission_per_trade=0
                             reject_reason = acct_reason
 
                     if reject_reason is None:
-                        stop_price_est, take_profit_price_est, stop_distance = calculate_stop_and_target(
-                            direction, row["Close"], row["atr"], config=config
+                        # A combined multi-strategy frame (see combined_signals_4h.py)
+                        # can supply its OWN per-row stop/target distances, when the
+                        # two strategies being combined use different ATR multiples -
+                        # used in preference to this RiskConfig's single global
+                        # multiple if present and not NaN. Single-strategy frames
+                        # never set these columns, so they fall back to the original
+                        # behavior unchanged.
+                        override_stop = row.get("stop_distance_override")
+                        has_override = override_stop is not None and not (
+                            isinstance(override_stop, float) and pd.isna(override_stop)
                         )
-                        target_distance = config.take_profit_atr_multiple * row["atr"]
+                        if has_override:
+                            stop_distance = override_stop
+                            target_distance = row["target_distance_override"]
+                        else:
+                            _, _, stop_distance = calculate_stop_and_target(
+                                direction, row["Close"], row["atr"], config=config
+                            )
+                            target_distance = config.take_profit_atr_multiple * row["atr"]
                         value_per_unit = value_per_price_unit(symbol, row["Close"])
                         notional_per_unit = notional_value_per_unit(symbol, row["Close"])
                         size = calculate_position_size(
@@ -213,6 +254,7 @@ def run_backtest(instrument_frames, starting_cash=10_000, commission_per_trade=0
                                     "stop_distance": stop_distance,
                                     "target_distance": target_distance,
                                     "slippage_amount": SLIPPAGE_ATR_FRACTION * row["atr"],
+                                    "signal_source": row.get("signal_source", "unknown"),
                                 }
 
                     if reject_reason is not None:

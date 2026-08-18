@@ -20,6 +20,11 @@ entry available" signal based on the strategy's technical rules:
      unless the market has been moving DIRECTIONALLY efficiently lately,
      not just cleared a price level - see below, this is the one filter
      backed by an actual diagnosed pattern rather than a hypothesis.
+  6. (Optional, off by default) Trend-Efficiency filter: the same idea as
+     #5, but measured on the 4H series - is the higher-timeframe TREND
+     itself moving with conviction, not just "did the last few 1H
+     candles happen to move in a line". Built specifically because #5
+     provably does NOT fix the worst diagnosed failure regime (see below).
 
 All of this is configurable via SignalConfig so run_backtest.py can try
 several parameter/filter combinations without editing this file.
@@ -49,6 +54,19 @@ DIFFERENT from the (already-tried-and-rejected) volatility filter: that
 measured raw ATR level; this measures directional EFFICIENCY, which is
 what the diagnostic actually separated on. Off by default until swept
 and stress-tested with the same rigor as everything else in this file.
+
+*** trend_efficiency filter (#6) exists because #5 provably does NOT fix
+the worst diagnosed failure regime. *** A deep dive into the worst
+stress-test episode (2023-12-28 to 2024-07-23, a broad-but-choppy
+uptrend - ~200 uniform ~-1R losses, a 13-trade losing streak) found the
+1H efficiency filter changed almost nothing about that regime's outcome
+(win rate 23.3% without it vs 23.6% with it) - because a sharp counter-
+move within 1H chop can register as "efficient" too, even while the
+broader 4H trend isn't actually pushing anywhere. Measuring efficiency
+on the SAME timeframe the trend filter itself runs on is a genuinely
+different question. Same discipline as #5: window fixed, only the
+threshold is a free parameter, and this must clear the same 11-scenario
+stress test before being trusted, let alone adopted as default.
 
 This file only decides "is there a technically valid setup right now" -
 it doesn't know about spreads, account risk, or safety limits. That's
@@ -100,6 +118,24 @@ class SignalConfig:
     efficiency_ratio_window: int = 20
     efficiency_ratio_min_threshold: float = 0.3  # starting point - to be swept
 
+    # Trend-efficiency filter - structural redesign idea #2. Same
+    # Efficiency Ratio measure as above, but applied to the 4H series
+    # (where the trend decision itself lives), not the 1H entry series.
+    # Targets the specific blind spot found in the worst stress-test
+    # episode: a 4H trend that's technically "up" (EMA50>200) but not
+    # actually pushing with conviction - the 1H-side efficiency filter
+    # provably didn't fix that regime (win rate unchanged with/without
+    # it), because a sharp counter-move within the chop can look
+    # "efficient" on the fast timeframe too. Measuring efficiency on the
+    # SAME timeframe the trend filter itself uses is a different
+    # question: is the trend actually moving with conviction, not just
+    # "did the last few 1H candles happen to move in a line". Window
+    # fixed at 20 4H bars (~80 hours) to match the same "20" convention
+    # used everywhere else in this spec - only the threshold is swept.
+    use_trend_efficiency_filter: bool = False
+    trend_efficiency_window: int = 20
+    trend_efficiency_min_threshold: float = 0.3  # starting point - to be swept
+
 
 DEFAULT_SIGNAL_CONFIG = SignalConfig()
 
@@ -116,6 +152,17 @@ def prepare_4h_trend(h4_df, config=DEFAULT_SIGNAL_CONFIG):
     out["ema_slow"] = ema(h4_df["Close"], config.ema_slow_period)
     out["trend_up"] = out["ema_fast"] > out["ema_slow"]
     out["trend_down"] = out["ema_fast"] < out["ema_slow"]
+
+    # Optional: how efficiently has the 4H series itself been moving
+    # lately - same Efficiency Ratio formula as the 1H filter, applied
+    # here to measure conviction in the trend itself, not just "did the
+    # last few 1H candles move in a line". Not shifted, for the same
+    # lookahead-safety reason as the 1H version (see module docstring).
+    if config.use_trend_efficiency_filter:
+        window = config.trend_efficiency_window
+        net_move = (h4_df["Close"] - h4_df["Close"].shift(window)).abs()
+        path_length = h4_df["Close"].diff().abs().rolling(window).sum()
+        out["trend_efficiency_ratio"] = net_move / path_length
 
     out.index = out.index + pd.Timedelta(hours=4)
     return out
@@ -193,11 +240,26 @@ def prepare_instrument_frame(h1_df, h4_df, config=DEFAULT_SIGNAL_CONFIG):
     else:
         efficiency_ok = pd.Series(True, index=df.index)
 
+    # --- Optional trend-efficiency filter: same measure as above, but
+    # computed on the 4H series (see prepare_4h_trend) and merged onto
+    # the 1H timeline exactly like trend_up/trend_down - no lookahead,
+    # since it's known as of the same moment the 4H trend reading itself
+    # becomes known. NaN (not enough 4H history yet) compares as False
+    # via `>`, so no separate warm-up handling is needed here.
+    if config.use_trend_efficiency_filter:
+        trend_efficiency_ok = df["trend_efficiency_ratio"] > config.trend_efficiency_min_threshold
+    else:
+        trend_efficiency_ok = pd.Series(True, index=df.index)
+
     # --- The two mirrored technical entry rules, plus whichever optional
     # filters are enabled. (Rule 3 - spread - is checked in
     # risk_management.py, since it's a risk/execution concern rather than
     # "is there a technical setup".)
-    df["signal_long"] = df["trend_up"] & (df["Close"] > long_breakout_level) & volatility_ok & efficiency_ok
-    df["signal_short"] = df["trend_down"] & (df["Close"] < short_breakout_level) & volatility_ok & efficiency_ok
+    df["signal_long"] = (
+        df["trend_up"] & (df["Close"] > long_breakout_level) & volatility_ok & efficiency_ok & trend_efficiency_ok
+    )
+    df["signal_short"] = (
+        df["trend_down"] & (df["Close"] < short_breakout_level) & volatility_ok & efficiency_ok & trend_efficiency_ok
+    )
 
     return df

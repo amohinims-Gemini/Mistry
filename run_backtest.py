@@ -52,21 +52,23 @@ MIN_REQUIRED_PROFIT_FACTOR = 1.2
 # =============================================================================
 # Experiments - each is (label, SignalConfig, RiskConfig).
 #
-# STATUS: the structural redesign is PAUSED - see README.md for the full
-# history. Two of three ideas tried (channel-length retuning, stop-to-
-# breakeven trade management) failed full 11-scenario stress-testing after
-# looking promising on a single split or one diagnosed episode. One
-# (an efficiency-ratio entry filter) showed a genuine, if partial,
-# improvement (pass rate 18%->36% across the stress test) but was never
-# adopted as a default pending further work. Current defaults below are
-# the plain, original spec entry/risk logic - no optional filter active.
-#
-# To resume exploring, add more (label, SignalConfig, RiskConfig) tuples
-# here - the comparison-table machinery handles any number of them.
+# REDESIGN RESUMED, item #2 - strengthen the trend filter itself. A deep
+# dive into the worst stress-test episode found the 1H efficiency filter
+# (item from the prior round) does NOT fix a 4H trend that's technically
+# "up" but not actually pushing with conviction - measuring efficiency on
+# the entry timeframe couldn't distinguish that from real chop. This
+# sweep tests the same Efficiency Ratio measure applied to the 4H series
+# instead (signals.py's use_trend_efficiency_filter). Deliberately ONE
+# free parameter (the threshold) at spec-default entry logic (channel=20,
+# no other filters) - not combining with anything else yet, to isolate
+# its effect first.
 # =============================================================================
 
-EXPERIMENTS = [
-    ("current defaults (spec-original entry logic)", SignalConfig(), RiskConfig()),
+TREND_EFFICIENCY_THRESHOLDS_TO_TEST = [0.15, 0.20, 0.25, 0.30, 0.35, 0.40]
+
+EXPERIMENTS = [("no trend-efficiency filter (baseline)", SignalConfig(), RiskConfig())] + [
+    (f"trend efficiency > {t}", SignalConfig(use_trend_efficiency_filter=True, trend_efficiency_min_threshold=t), RiskConfig())
+    for t in TREND_EFFICIENCY_THRESHOLDS_TO_TEST
 ]
 
 

@@ -55,3 +55,39 @@ def rolling_low(low, period):
     """Lowest Low over the last `period` candles - mirror of
     rolling_high, for short entries."""
     return low.rolling(period).min()
+
+
+def sma(close, period):
+    """Simple Moving Average: the plain average closing price over the
+    last `period` candles - the center line Bollinger Bands are built
+    around."""
+    return close.rolling(period).mean()
+
+
+def rolling_std(close, period):
+    """Rolling standard deviation of closing price over the last
+    `period` candles - the volatility measure Bollinger Bands use to set
+    how far the upper/lower bands sit from the SMA."""
+    return close.rolling(period).std()
+
+
+def rsi(close, period=14):
+    """Relative Strength Index (0-100): how much of recent price
+    movement has been up vs down, over the last `period` candles. Below
+    30 is typically "oversold" (a lot of recent selling pressure), above
+    70 "overbought" (a lot of recent buying pressure).
+
+    Computed the standard way:
+      - split each price move into "gain" (up moves) or "loss" (down moves)
+      - average them over the last `period` candles
+      - RSI = 100 - 100 / (1 + average_gain / average_loss)
+    """
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
+
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
