@@ -145,10 +145,17 @@ def place_market_order_with_stop(instrument, units, stop_distance, take_profit_p
     """
     client = get_live_client()
 
+    # NOTE: oandapyV20.contrib.requests.StopLossDetails's constructor only
+    # accepts `price`, not `distance`, even though OANDA's actual v20 REST
+    # API accepts a `distance` field on a StopLossOrder (this was found by
+    # testing - StopLossDetails(distance=...) raises TypeError locally,
+    # before ever reaching OANDA's server). Building the dict by hand for
+    # just this one field, bypassing the convenience wrapper, to get the
+    # behavior described in this function's docstring above.
     order = MarketOrderRequest(
         instrument=instrument,
         units=units,
-        stopLossOnFill=StopLossDetails(distance=f"{stop_distance:.{price_precision}f}").data,
+        stopLossOnFill={"distance": f"{stop_distance:.{price_precision}f}", "timeInForce": "GTC"},
         takeProfitOnFill=TakeProfitDetails(price=f"{take_profit_price:.{price_precision}f}").data,
         clientExtensions={"tag": CLIENT_TAG, "comment": "Mistry automated entry"},
     )
