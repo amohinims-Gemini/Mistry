@@ -41,12 +41,18 @@ rewriting just this file - nothing else in the project needs to change.
 # (12:15-13:15 UTC) to cover both without needing to know the exact date
 # DST changed in any given year.
 BLACKOUT_WINDOWS_UTC = [
-    (0, 12, 15, 13, 15),  # Monday
-    (1, 12, 15, 13, 15),  # Tuesday
-    (2, 12, 15, 13, 15),  # Wednesday - doesn't cover the 2pm ET FOMC decision itself
-    (3, 12, 15, 13, 15),  # Thursday
-    (4, 12, 15, 13, 15),  # Friday - covers NFP (always a Friday, 8:30am ET)
+    (0, 12, 0, 14, 0),  # Monday
+    (1, 12, 0, 14, 0),  # Tuesday
+    (2, 12, 0, 14, 0),  # Wednesday - doesn't cover the 2pm ET FOMC decision itself
+    (3, 12, 0, 14, 0),  # Thursday
+    (4, 12, 0, 14, 0),  # Friday - covers NFP (always a Friday, 8:30am ET)
 ]
+# Widened to whole-hour boundaries (12:00-14:00 UTC, was 12:15-13:15) so
+# this can actually catch candles on ANY timeframe used in this project -
+# 4H candles land exactly on hours 0/4/8/12/16/20, so a window starting
+# at :15 could never overlap one at all. A small, deliberate generosity
+# increase on an already-approximate heuristic, not a 4H-specific hack -
+# applies to every strategy that imports this module.
 
 
 def is_blackout_window(timestamp_utc):

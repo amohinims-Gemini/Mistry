@@ -190,10 +190,11 @@ def generate_synthetic_data(oanda_symbol, granularity, periods, start_price, see
     rng = np.random.default_rng(seed)
 
     # Rough per-candle volatility scaled by timeframe (4H moves ~2x a 1H
-    # candle, not exactly sqrt(4) since real markets aren't pure random
-    # walk, but close enough for a smoke-test fallback).
+    # candle, daily ~4x - not exactly sqrt(n) since real markets aren't a
+    # pure random walk, but close enough for a smoke-test fallback).
     base_hourly_vol = 0.0006 if start_price < 100 else 0.0004  # forex vs gold/JPY-scale prices
-    vol = base_hourly_vol * (2.0 if granularity == "H4" else 1.0)
+    vol_scale = {"H4": 2.0, "D": 4.0}.get(granularity, 1.0)
+    vol = base_hourly_vol * vol_scale
 
     returns = rng.normal(loc=0.0, scale=vol, size=periods)
     close = start_price * np.cumprod(1 + returns)
@@ -208,7 +209,7 @@ def generate_synthetic_data(oanda_symbol, granularity, periods, start_price, see
     spec = next(s for s in INSTRUMENTS.values() if s.oanda_symbol == oanda_symbol)
     half_spread = spec.pip_size * 0.75
 
-    freq = "4h" if granularity == "H4" else "h"
+    freq = {"H4": "4h", "D": "1D"}.get(granularity, "h")
     index = pd.date_range(end=pd.Timestamp.now().floor("h"), periods=periods, freq=freq)
 
     df = pd.DataFrame({
@@ -254,7 +255,10 @@ def fetch_all(instrument_symbols, granularities=("H1", "H4")):
         print(f"\nCould not fetch live OANDA data ({e}).")
         print("Falling back to SYNTHETIC sample data for ALL instruments (NOT real prices).")
         synthetic = {}
-        periods_by_granularity = {"H1": 365 * YEARS_OF_HISTORY * 16, "H4": 365 * YEARS_OF_HISTORY * 4}
+        periods_by_granularity = {
+            "H1": 365 * YEARS_OF_HISTORY * 16, "H4": 365 * YEARS_OF_HISTORY * 4,
+            "D": 365 * YEARS_OF_HISTORY,
+        }
         for i, symbol in enumerate(instrument_symbols):
             spec = INSTRUMENTS[symbol]
             synthetic[symbol] = {}

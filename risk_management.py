@@ -206,7 +206,18 @@ def data_is_stale(bar_timestamp, previous_bar_timestamp, config=DEFAULT_CONFIG):
     if previous_bar_timestamp is None:
         return False
     gap = bar_timestamp - previous_bar_timestamp
-    spans_weekend = previous_bar_timestamp.weekday() == 4 and bar_timestamp.weekday() in (5, 6, 0)
+    # previous_bar.weekday() == 4 (Friday) is correct for 1H/4H bars, whose
+    # last pre-weekend candle opens Friday. Daily bars are the OPEN-time-
+    # labeled exception: OANDA's daily candle boundary is 21:00 UTC, so the
+    # candle covering the Friday session actually opens Thursday 21:00 UTC
+    # (weekday() == 3) - found while adding daily-timeframe support,
+    # because that mismatch meant every weekly weekend gap on daily bars
+    # was being judged against the NORMAL (not weekend) threshold and
+    # wrongly flagged as stale, every single week. Checking both weekdays
+    # is safe for 1H/4H too - a real stale gap starting mid-week is still
+    # caught by the normal threshold regardless of which weekday label the
+    # weekend check itself uses.
+    spans_weekend = previous_bar_timestamp.weekday() in (3, 4) and bar_timestamp.weekday() in (5, 6, 0)
     limit_hours = config.stale_data_max_weekend_gap_hours if spans_weekend else config.stale_data_max_gap_hours
     return gap.total_seconds() / 3600 > limit_hours
 
@@ -235,6 +246,10 @@ class Position:
     risk_dollars: float     # $ actually at risk at entry (after rounding to whole units)
     risk_pct: float         # risk_dollars / balance-at-entry
     breakeven_triggered: bool = False  # has the stop already been ratcheted to breakeven?
+    signal_source: str = "unknown"     # which strategy generated this entry - only meaningful
+                                         # for combined multi-strategy frames (see
+                                         # combined_signals_4h.py); single-strategy backtests
+                                         # just leave this at the default.
 
 
 def apply_breakeven_if_triggered(position, bid_high, ask_low, config=DEFAULT_CONFIG):
@@ -459,7 +474,7 @@ class PortfolioAccount:
     # --- Opening / closing positions -------------------------------------------
 
     def open_position(self, symbol, direction, entry_time, entry_price, size_units,
-                       stop_price, take_profit_price):
+                       stop_price, take_profit_price, signal_source="unknown"):
         spec = INSTRUMENTS[symbol]
         value_per_unit = value_per_price_unit(symbol, entry_price)
         stop_distance = abs(entry_price - stop_price)
@@ -470,7 +485,7 @@ class PortfolioAccount:
             symbol=symbol, correlation_group=spec.correlation_group, direction=direction,
             entry_time=entry_time, entry_price=entry_price, size_units=size_units,
             stop_price=stop_price, take_profit_price=take_profit_price,
-            risk_dollars=risk_dollars, risk_pct=risk_pct,
+            risk_dollars=risk_dollars, risk_pct=risk_pct, signal_source=signal_source,
         )
         self.open_positions[symbol] = position
         self.correlation_groups_open.add(spec.correlation_group)
@@ -498,6 +513,7 @@ class PortfolioAccount:
             "exit_time": exit_time, "exit_price": exit_price,
             "size_units": position.size_units, "pnl": pnl,
             "risk_dollars": position.risk_dollars, "exit_reason": exit_reason,
+            "signal_source": position.signal_source,
         }
         self.closed_trades.append(trade_record)
         return trade_record

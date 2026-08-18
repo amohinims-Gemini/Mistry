@@ -51,6 +51,35 @@ windows. Treat the single-split PASS above as "true on this data, not
 evidence of a robust edge" - see "Tuning history" for the full,
 unflattering story of how this was found out.
 
+### Systematic strategy search: on hold
+
+Beyond the original 1H strategy above, this project tried a wide sweep
+of alternatives - a from-scratch mean-reversion strategy, single-
+timeframe 4H versions of both trend-following and mean-reversion, a
+combined 4H portfolio running both at once, and single-timeframe daily
+versions of both. **None of them cleared the validation bars either.**
+Summary (see "Tuning history" items 13+ for the full detail):
+
+| Timeframe / strategy | Outcome |
+|---|---|
+| 1H trend-following (original spec, above) | Fails robustness: 2/11 stress-test pass rate |
+| 1H mean-reversion | Failed at every reward:risk / Bollinger-width tried |
+| 4H trend-following (single timeframe) | Near-breakeven, tight drawdown, 0/11 stress-test pass rate |
+| 4H mean-reversion (single timeframe) | Near-breakeven, tight drawdown, never cleared a single split cleanly |
+| 4H combined portfolio (both at once) | Worse than either alone - shared-slot crowding, not diversification |
+| Daily trend-following (single timeframe) | Genuinely losing (test PF 0.65) and short of the trade-count minimum |
+| Daily mean-reversion (single timeframe) | Far short of the trade-count minimum; its "good" PF is a 13-trade sample, not signal |
+
+The systematic search across this entry-logic family (EMA-trend/
+channel-breakout and Bollinger/RSI mean-reversion, at every timeframe
+tried) is **on hold** as of this point - not because any one bug was
+found, but because moving to a lower-noise timeframe (4H, then daily)
+consistently traded away edge without producing robustness in return,
+and combining the two surviving 4H strategies made things worse rather
+than better despite genuinely uncorrelated trades (see item 17). Picking
+this back up would mean either a genuinely different signal class, or
+accepting the original 1H strategy's documented lack of robustness.
+
 ## The strategy
 
 **Markets:** EUR/USD, GBP/USD, USD/JPY, Gold (XAU/USD). Adding another
@@ -186,11 +215,109 @@ this history to preserve.
     one (efficiency filter) showed only partial improvement. Current
     defaults are the plain original spec entry/risk logic.
 
+13. **A from-scratch mean-reversion strategy was designed and built**
+    (`mean_reversion_signals.py`): Bollinger Bands + RSI entry on 1H,
+    with a 4H Efficiency-Ratio trend-avoidance filter (reject entries
+    when the market is trending efficiently rather than range-bound).
+    Round 1 (untuned, literal proposal numbers) validated the core
+    premise - a genuinely high win rate (53-56%) - but profit factor
+    stayed below 1 (small average wins, R:R 1.5x/1.0x too tight to
+    convert that win rate into net profit).
+14. **A stop/target R:R sweep on the mean-reversion strategy** found
+    wider stops (up to 2.5x) pushed win rate as high as 65-75% and
+    produced one single-split PASS (PF 1.202) - but the 11-scenario
+    stress test showed only 2/11 scenarios passing (avg PF 0.852, still
+    net-losing on average). A follow-up Bollinger-width sweep found a
+    noisy, non-monotonic PF curve with one promising-looking point
+    (2.5std, PF 1.312) that stress-testing confirmed was statistically
+    indistinguishable from the 2.0std baseline (both 2/11) - a null
+    result, and a second confirmation (after item 4/7) that a noisy
+    single-parameter sweep curve is a real overfitting signature worth
+    distrusting on sight in this project.
+15. **Moved both strategies to a single 4H timeframe**
+    (`signals_4h.py`, `mean_reversion_signals_4h.py`), removing the 1H/
+    4H mismatch diagnosed as a structural blind spot in item 10 -
+    trend filter and entry trigger (or Bollinger/RSI and its trend-
+    avoidance filter) now both computed from the same series, no
+    cross-timeframe merge. ATR stop/target multiples reset to the
+    literal spec numbers rather than reusing 1H-tuned values. Round-1
+    results for BOTH: dramatically tighter, more consistent drawdown
+    control than any 1H configuration (4H trend-following: max test
+    drawdown never exceeded 8.02% across all 11 stress-test scenarios,
+    vs 20-28% at 1H) - but neither produced a real edge above roughly
+    breakeven (4H trend: 0/11 stress-test pass rate, avg test PF 0.997;
+    4H mean-reversion: never cleared even the single split cleanly).
+    Fine stop-multiple sweeps on both found tight, noisy bands with no
+    clean winner - not stress-tested, since nothing cleared the single
+    split.
+16. **Two granularity-correctness bugs were found and fixed while
+    building the 4H versions** (not just re-tuning - genuine
+    correctness issues that would have silently produced wrong
+    results): the overnight-financing rollover check (`ts.hour == 21`)
+    never fires on 4H bars, which land on hours 0/4/8/12/16/20 -
+    fixed via a new `bar_duration_hours` parameter to `run_backtest()`.
+    And the stale-data gap threshold (3h default) was tighter than the
+    NORMAL 4-hour gap between 4H bars, which would have flagged every
+    single bar as stale - fixed by widening it to 6h for 4H runs.
+17. **Tested combining the two 4H strategies into one portfolio**
+    (`combined_signals_4h.py`), motivated by both being near-breakeven
+    individually but structurally close to mutually exclusive by
+    construction. Checked diversification BEFORE building anything
+    further: daily P&L correlation between the two strategies' trades
+    was -0.02 (essentially zero), with only ~2.7% of trades landing on
+    the same instrument on the same day - genuinely uncorrelated, not
+    duplicating the same edge. Built the combination sharing one
+    `PortfolioAccount` and its existing risk/position limits (an
+    instrument fires whichever strategy signals; same-direction
+    agreement is tagged and taken once, opposite-direction conflicts
+    are skipped). Result: **worse than either strategy alone** (test PF
+    0.765, vs 1.004 and 0.919 standalone) - not a diversification
+    failure but a resource-contention one: trend-following fires far
+    more often than mean-reversion (~4:1 in the combination, vs ~1.5:1
+    standalone), so sharing one "single open position per instrument"
+    slot let it crowd out mean-reversion's opportunities more than half
+    the time, rather than the two return profiles genuinely averaging.
+    Uncorrelated trades turned out to be necessary but not sufficient -
+    the specific sharing mechanism mattered and this one actively
+    suppressed the benefit. Not stress-tested (failed the single split).
+18. **Moved to a single daily timeframe as the documented fallback**
+    (`signals_daily.py`, `mean_reversion_signals_daily.py`), carrying
+    the same bar-count parameters forward (50/200 EMA, 20-bar channel,
+    Bollinger 20/2std, RSI 14 - arguably more natural on daily than 4H,
+    since 50/200-day EMA is the standard "golden/death cross"
+    convention). Found and fixed a THIRD granularity-correctness bug
+    while checking data availability: `data_is_stale()`'s weekend-gap
+    detection checked `previous_bar.weekday() == 4 (Friday)`, correct
+    for 1H/4H bars (whose last pre-weekend candle opens Friday) but
+    wrong for daily bars, whose OANDA candle boundary (21:00 UTC) means
+    the pre-weekend candle opens THURSDAY - every weekly weekend gap on
+    daily data was being judged against the normal (not weekend)
+    threshold and would have been wrongly flagged stale, every week.
+    Fixed by checking both weekdays (safe for 1H/4H too).
+19. **Daily results were worse than 4H, not better**: trend-following
+    was genuinely losing on both train and test (test PF 0.653, test
+    return -1.61%) as well as short of the 150-trade minimum (103
+    total); mean-reversion fell far short of the trade-count minimum
+    (42 total, vs a pre-build check that correctly flagged its raw
+    signal frequency as thin) - its apparently-strong test PF (2.320)
+    is a 13-trade sample, not a meaningful result. Lower sampling
+    frequency didn't filter out noise the way 4H partly did; it just
+    removed too much of the opportunity set, and trend-following's
+    edge went negative rather than staying flat. Neither cleared the
+    single split, so neither was stress-tested.
+20. **The systematic search is now on hold** - see "Systematic strategy
+    search: on hold" above for the full comparison table. Every
+    timeframe tried (1H, 4H, daily) on both entry-logic families
+    (trend-following, mean-reversion), individually and combined,
+    failed to clear the validation bars robustly.
+
 **Bottom line:** every "this fixes it" moment in this history except the
-efficiency-ratio filter was later found to be wrong or to not
-generalize. The efficiency-ratio filter is the one piece of real,
-partially-validated signal so far - not yet strong enough on its own to
-call this strategy solved. Treat everything in this project as "as
+efficiency-ratio filter (item 9) was later found to be wrong or to not
+generalize, and the broader search across timeframes and a combined
+portfolio (items 13-19) didn't find anything that did generalize either.
+The efficiency-ratio filter remains the one piece of real, partially-
+validated signal found so far - not strong enough on its own to call any
+version of this strategy solved. Treat everything in this project as "as
 honest as we know how to make it," not "proven to work."
 
 ## How the 8% drawdown suspension resumes
@@ -231,7 +358,14 @@ order.
   API is available here, so this blocks new entries during a recurring
   weekday UTC time window that commonly covers US data releases. It
   does NOT know about FOMC/ECB/BoE decisions or one-off events. Built as
-  a single swappable function so a real calendar feed can replace it later.
+  a single swappable function so a real calendar feed can replace it
+  later. **At daily granularity this is a documented no-op**: OANDA's
+  daily candles are timestamped 21:00 UTC, which never falls inside the
+  12:00-14:00 UTC blackout window, so the filter never rejects anything
+  in `run_backtest_daily.py`/`run_mean_reversion_backtest_daily.py`.
+  Making it apply meaningfully at daily resolution would need a
+  different design (blocking whole announcement days, not a timestamp
+  match) - not implemented.
 - **Swap/financing rates** (`instruments.py`): static, ballpark annual %
   rates per instrument/direction, applied nightly (tripled on Wednesdays
   for weekend rollover). Real OANDA rates move with central bank policy
@@ -276,13 +410,22 @@ results ever look unexpectedly off, check the run's output for a
 | File | Purpose |
 |---|---|
 | `instruments.py` | Per-instrument specs, pip/notional value math (incl. cross-currency), correlation group, spread cap, swap rates |
-| `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback |
-| `indicators.py` | EMA, ATR, rolling high/low channel |
-| `signals.py` | Merges the 4H trend filter onto the 1H timeline (no lookahead) and computes entry signals; `SignalConfig` holds all tunable entry-logic parameters |
+| `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports H1/H4/D granularities |
+| `indicators.py` | EMA, ATR, rolling high/low channel, SMA, rolling std, RSI |
+| `signals.py` | Original 4H-trend/1H-entry trend-following strategy (merges the 4H trend filter onto the 1H timeline, no lookahead); `SignalConfig` holds all tunable entry-logic parameters |
+| `signals_4h.py` | Single-timeframe 4H trend-following - trend filter and entry trigger both computed from the same 4H series; `Signal4HConfig` |
+| `signals_daily.py` | Single-timeframe daily trend-following, same structure as `signals_4h.py`; `SignalDailyConfig` |
+| `mean_reversion_signals.py` | 1H Bollinger/RSI mean-reversion entry with a 4H Efficiency-Ratio trend-avoidance filter; `MeanReversionConfig` |
+| `mean_reversion_signals_4h.py` | Single-timeframe 4H mean-reversion - entry and trend-avoidance filter both on the same 4H series; `MeanReversion4HConfig` |
+| `mean_reversion_signals_daily.py` | Single-timeframe daily mean-reversion, same structure as the 4H version; `MeanReversionDailyConfig` |
+| `combined_signals_4h.py` | Merges the 4H trend-following and mean-reversion signal frames per instrument into one combined frame, for running both out of one shared account (see "Tuning history" item 17) |
 | `risk_management.py` | Position sizing (with leverage cap) + `PortfolioAccount`: every safety limit, breakeven-stop trade management, shared across all instruments; `RiskConfig` holds all tunable risk parameters |
-| `econ_calendar.py` | The approximate news-blackout heuristic (swappable) |
-| `backtest_engine.py` | The custom multi-instrument, chronological-lockstep backtest simulator |
-| `run_backtest.py` | Entry point: fetch data, train/test split, run one or more (SignalConfig, RiskConfig) experiments, print the full honest report + comparison table |
+| `econ_calendar.py` | The approximate news-blackout heuristic (swappable) - a documented no-op at daily granularity, see "Known approximations" |
+| `backtest_engine.py` | The custom multi-instrument, chronological-lockstep backtest simulator; `bar_duration_hours` parameter makes the financing-rollover check correct at any granularity, and a frame may optionally carry per-row `stop_distance_override`/`target_distance_override`/`signal_source` columns (used by `combined_signals_4h.py`) |
+| `run_backtest.py` | Entry point for `signals.py`; also the shared helper module (`split_train_test`, `compute_metrics`, `evaluate_requirements`, report/comparison printers) every other `run_*.py` script imports from |
+| `run_backtest_4h.py` / `run_backtest_daily.py` | Entry points for the single-timeframe 4H / daily trend-following strategies |
+| `run_mean_reversion_backtest.py` / `run_mean_reversion_backtest_4h.py` / `run_mean_reversion_backtest_daily.py` | Entry points for the 1H / 4H / daily mean-reversion strategies |
+| `run_combined_backtest_4h.py` | Entry point for the combined 4H trend-following + mean-reversion portfolio |
 | `tests/` | pytest suite - currently covers currency-conversion/position-sizing math (`requirements-dev.txt`) |
 | `live/` | Incomplete, paused live-demo-trading connector - see "Live trading" above |
 | `.env.example` | Template for the environment variables `data_fetch.py`/`live/` need - copy to `.env` |
