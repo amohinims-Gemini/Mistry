@@ -75,6 +75,8 @@ either.** Summary (see "Tuning history" items 13+ for the full detail):
 | Relative-value/pairs (EUR_USD vs GBP_USD spread, approximate check) | Weak structural evidence to begin with (spread barely more mean-reverting than either leg); phase-1 cheap check showed train/test in opposite directions with zero transaction costs modeled - not built out further |
 | AUD_USD on the existing 4H trend-following strategy | Clean fail, and worse than the existing 4-instrument basket (win rate 26-28%, below the ~33% breakeven the R:R needs) |
 | 4H trend-following R:R sweep (2:1 down to 1:1, stop fixed) | Win rate climbs cleanly as hypothesized (34.8%->52.5%) but profit factor stays flat (0.965-1.094) regardless - the higher win rate is paid for by proportionally smaller wins; best PF still well short of 1.2 |
+| Dual-confirmation (trend-following AND momentum must agree), momentum lookback=20 | Byte-for-byte IDENTICAL to the unfiltered trend baseline - proven algebraically to be a tautology when both signals share the same 20-bar window, not an empirical finding |
+| Dual-confirmation, momentum lookback swept 25-150 (genuinely independent of the 20-bar channel) | No improvement - 6 of 7 configs WORSE than the unfiltered baseline (requiring agreement filtered out profitable trades along with bad ones); best case merely matched baseline, never beat it |
 
 The systematic search across every entry-logic family tried so far
 (EMA-trend/channel-breakout, Bollinger/RSI mean-reversion, and raw
@@ -94,15 +96,20 @@ existing basket on the same strategy (item 25), and a direct test of
 the R:R hypothesis - lower the target so the win rates actually being
 achieved (26-52%) can clear the profit-factor bar - found win rate
 climbing exactly as expected but profit factor staying flat regardless
-of R:R (item 26). The consistent convergence of unrelated instruments,
-signal constructions, AND payout structures on the same mediocre
-outcome is itself the finding - it points toward a hard limit somewhere
-in this general approach (systematic technical entry signals on retail
-FX majors at this trade frequency), not a specific idea, instrument, or
-parameter worth retrying. What's left unexplored: the full (not
-approximate) relative-value engine, a structurally different edge
-entirely (not a technical entry signal), or accepting the original 1H
-strategy's documented lack of robustness.
+of R:R (item 26). A dual-confirmation filter (require trend-following
+AND an independent momentum signal to agree, item 27) added one more
+data point: no improvement, mostly worse than taking the trend signal
+unfiltered. The consistent convergence of unrelated instruments, signal
+constructions, payout structures, AND confirmation approaches on the
+same mediocre outcome is itself the finding - it points toward a hard
+limit somewhere in this general approach (systematic technical entry
+signals on retail FX majors at this trade frequency), not a specific
+idea, instrument, or parameter worth retrying. What's left unexplored:
+a volatility-expansion confirmation filter (a different, not-yet-tried
+lens than momentum agreement), the full (not approximate) relative-
+value engine, a structurally different edge entirely (not a technical
+entry signal), or accepting the original 1H strategy's documented lack
+of robustness.
 
 ## The strategy
 
@@ -411,19 +418,36 @@ this history to preserve.
     item 10, meaning even the modest PF differences between configs
     shouldn't be read as a real ranking. Nothing cleared the single
     split, so nothing was stress-tested.
-27. **The systematic search is paused again** - see "Systematic
+27. **Dual-confirmation (require trend-following AND a second signal to
+    agree) was tried next** - trend-following (signals_4h.py) AND time-
+    series momentum (signals_momentum_4h.py) both had to point the same
+    direction (`signals_confirmed_4h.py`). Round 1 (momentum lookback=20,
+    matching the breakout channel's own window) produced results BYTE-
+    FOR-BYTE IDENTICAL to the unfiltered trend baseline - proven
+    algebraically, not just observed empirically, to be a tautology: with
+    matching windows, a 20-bar breakout mathematically guarantees 20-bar
+    momentum agreement (every price in the breakout window, including the
+    one 20 bars back, is bounded by the same rolling max), so the
+    "confirmation" filters out zero trades by construction. A follow-up
+    sweep of momentum lookbacks that genuinely break the tautology
+    (25-150 bars, strictly longer than the 20-bar channel) found NO
+    improvement - 6 of 7 configs were WORSE than the unfiltered baseline,
+    the best case merely matched it. Requiring independent agreement
+    filtered out profitable trades along with bad ones, net negative.
+28. **The systematic search is paused again** - see "Systematic
     strategy search: on hold" above for the full comparison table across
-    every instrument, timeframe, signal class, and payout structure
-    tried. The consistent convergence of all of them on the same
-    mediocre outcome is now the headline finding, not any individual
-    result.
+    every instrument, timeframe, signal class, payout structure, and now
+    confirmation-filter approach tried. The consistent convergence of
+    all of them on the same mediocre outcome is now the headline
+    finding, not any individual result.
 
 **Bottom line:** every "this fixes it" moment in this history except the
 efficiency-ratio filter (item 9) was later found to be wrong or to not
 generalize, and the broader search across timeframes, a combined
-portfolio, a genuinely different signal class, a new instrument, and a
-direct test of the payout structure itself (items 13-27) didn't find
-anything that did generalize either. The efficiency-ratio filter
+portfolio, a genuinely different signal class, a new instrument, a
+direct test of the payout structure itself, and a dual-confirmation
+filter (items 13-28) didn't find anything that did generalize either.
+The efficiency-ratio filter
 remains the one piece of real, partially-
 validated signal found so far - not strong enough on its own to call any
 version of this strategy solved. Treat everything in this project as "as
@@ -563,6 +587,45 @@ genuine consecutive-loss cooldown triggering, a drawdown suspension, a
 real signal firing on its own) remains unverified against the live API
 and should still be watched closely, not left unattended, the first
 time it happens.
+
+### Second real run - organic signals, and a genuine safety-limit bug found live
+
+Run again later, this time letting it trade organically (no forced test
+trade) for an extended period. Handled two transient OANDA/network
+errors correctly (a connection reset, and a one-off "insufficient
+authorization" response) - both caught by the per-cycle error handling,
+logged, and recovered on the next cycle without intervention; verified
+independently at the time that credentials were still valid and no
+position was left unprotected by either.
+
+Then a real signal fired organically - and surfaced a genuine bug: **3
+instruments in the SAME correlation group (`EUR_USD`, `GBP_USD`,
+`USD_JPY` - all `usd_fx`) opened positions in the SAME cycle**, directly
+violating the "only one open trade per correlation group at a time"
+rule this project has enforced since the original spec. Root cause:
+`run_cycle()` fetched `open_positions`/`correlation_groups_open` ONCE at
+the top of the cycle and checked every instrument's gate against that
+same static snapshot - so if EUR_USD opened first, GBP_USD's gate check
+moments later in the same cycle's loop still saw the pre-cycle snapshot
+with no EUR_USD position in it. The backtest engine never had this bug
+(its per-symbol loop shares one live, mutable `PortfolioAccount` object,
+updated in real time as each symbol is processed within a bar) - this
+was specific to `run_live.py` computing a local snapshot once per cycle
+and never updating it as orders were placed within that same cycle.
+
+Stopped the bot immediately on discovering this (via the kill-switch)
+rather than let it keep running with the gate not doing its job. Fixed
+by updating the local `open_positions`/`correlation_groups_open`
+immediately after each successful order within the cycle's loop, not
+just on the next cycle's fresh sync - verified offline with a direct
+test that a same-group second entry is now correctly rejected within
+the same cycle. Checked the account afterward: no lingering exposure -
+all 4 positions (the 3 correlated ones plus an independent XAU_USD
+trade) had already closed via their own broker-held stops/targets by
+the time this was investigated, 0 open trades, no unrealized P&L. No
+real financial consequence either way (demo account), but the safety
+mechanism itself failed to do its job as designed, which mattered
+regardless of the outcome this time.
 
 ## Known approximations (deliberate, and documented in the code)
 
