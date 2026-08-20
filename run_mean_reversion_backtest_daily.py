@@ -22,7 +22,7 @@ Usage:
     python run_mean_reversion_backtest_daily.py
 """
 
-from instruments import INSTRUMENTS
+from instruments import INSTRUMENTS, PORTFOLIO_SYMBOLS
 from data_fetch import fetch_all
 from mean_reversion_signals_daily import prepare_instrument_frame, MeanReversionDailyConfig
 from backtest_engine import run_backtest
@@ -40,7 +40,7 @@ RISK_CONFIG = RiskConfig(stale_data_max_gap_hours=30)  # spec-literal 1.5x/1.0x 
 
 def build_all_frames(raw_data, config=MR_CONFIG):
     frames = {}
-    for symbol in INSTRUMENTS:
+    for symbol in PORTFOLIO_SYMBOLS:
         d1 = raw_data[symbol]["D"]
         frames[symbol] = prepare_instrument_frame(d1, config=config)
     return frames
@@ -56,7 +56,7 @@ def main():
     print("granularity - see run_backtest_daily.py's docstring.")
     print("=" * 78)
 
-    raw_data, is_synthetic = fetch_all(list(INSTRUMENTS.keys()), granularities=("D",))
+    raw_data, is_synthetic = fetch_all(PORTFOLIO_SYMBOLS, granularities=("D",))
     if is_synthetic:
         print(
             "\n*** NOTE: Using SYNTHETIC sample data (not real OANDA history), because "

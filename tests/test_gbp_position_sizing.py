@@ -36,6 +36,7 @@ PRICES = {
     "GBP_USD": 1.34811,
     "USD_JPY": 159.389,
     "XAU_USD": 4377.37,
+    "AUD_USD": 0.65432,
 }
 
 

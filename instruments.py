@@ -62,11 +62,26 @@ INSTRUMENTS = {
         hard_spread_cap=0.80,
         swap_long_pct_annual=-4.0, swap_short_pct_annual=1.0,
     ),
+    "AUD_USD": InstrumentSpec(
+        oanda_symbol="AUD_USD", base_currency="AUD", quote_currency="USD",
+        pip_size=0.0001, min_units=1, correlation_group="usd_fx",
+        hard_spread_cap=0.0015,
+        swap_long_pct_annual=-1.0, swap_short_pct_annual=0.1,
+    ),
     # To add oil later: e.g. "BCO_USD" (Brent) or "WTICO_USD" (WTI) -
     # quote_currency="USD" so the pip-value math below already handles it
     # for free. Give it its own correlation_group (e.g. "oil") unless you
     # deliberately want it sharing a group with something else.
 }
+
+# The "official" multi-instrument portfolio every combined backtest
+# script (run_backtest.py, run_backtest_4h.py, etc.) trades - kept
+# separate from INSTRUMENTS itself so a new instrument can be added to
+# the registry (e.g. for a standalone new-currency-pair check, like
+# AUD_USD) WITHOUT silently pulling it into every existing portfolio-
+# level script the moment it's added. Add a symbol here explicitly only
+# once it's actually meant to join the main portfolio.
+PORTFOLIO_SYMBOLS = ["EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD"]
 
 
 def value_per_price_unit(instrument_symbol, current_price, account_currency="USD", current_prices=None):

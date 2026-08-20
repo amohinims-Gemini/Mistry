@@ -47,11 +47,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from account_safety import verify_practice_account
 from oanda_live_client import get_instrument_trading_specs
 from live_state import LiveRiskState
-from live_account_sync import get_account_balances, get_live_open_positions, get_fresh_consecutive_losses
+from live_account_sync import get_account_balances, get_live_open_positions, get_fresh_consecutive_losses, LivePosition
 from order_execution import execute_signal
 import live_logging as log
 
-from instruments import INSTRUMENTS
+from instruments import INSTRUMENTS, PORTFOLIO_SYMBOLS, value_per_price_unit
 from data_fetch import get_instrument_data
 from signals_4h import prepare_instrument_frame, Signal4HConfig
 from risk_management import (
@@ -96,7 +96,7 @@ def run_cycle(state, last_seen_ts, real_specs, account_currency):
     # cross-currency risk_pct math on a non-USD account.
     frames = {}
     current_prices = {}
-    for symbol in INSTRUMENTS:
+    for symbol in PORTFOLIO_SYMBOLS:
         oanda_symbol = INSTRUMENTS[symbol].oanda_symbol
         df = get_instrument_data(oanda_symbol, "H4")
         frame = prepare_instrument_frame(df, config=SIGNAL_CONFIG)
@@ -157,6 +157,30 @@ def run_cycle(state, last_seen_ts, real_specs, account_currency):
         )
         log.log_event("order_result", symbol=symbol, candle_time=latest_ts, **result)
 
+        if result.get("action") == "opened":
+            # CRITICAL: update the LOCAL open_positions/correlation_groups_open
+            # immediately, in this same cycle - not just next cycle's fresh
+            # get_live_open_positions() sync. Found live: without this, every
+            # instrument in a cycle's loop was gated against the SAME stale
+            # snapshot taken at the top of the cycle, so multiple instruments
+            # in the same correlation group could all open in one cycle before
+            # any of them showed up in that snapshot - the exact concentrated-
+            # correlated-risk scenario correlation grouping exists to prevent.
+            # Confirmed happening for real: EUR_USD, GBP_USD, and USD_JPY (all
+            # "usd_fx") all opened in the same cycle before this fix.
+            value_per_unit = value_per_price_unit(
+                symbol, result["fill_price"], account_currency=account_currency, current_prices=current_prices
+            )
+            risk_dollars = result["stop_distance"] * abs(result["units"]) * value_per_unit
+            risk_pct = risk_dollars / balances["nav"] if balances["nav"] > 0 else 0.0
+            correlation_group = INSTRUMENTS[symbol].correlation_group
+            open_positions[symbol] = LivePosition(
+                symbol=symbol, correlation_group=correlation_group, risk_pct=risk_pct,
+                trade_id=result["trade_id"], direction=direction, units=result["units"],
+                entry_price=result["fill_price"],
+            )
+            correlation_groups_open.add(correlation_group)
+
     state.save()
 
 
@@ -172,7 +196,7 @@ def main():
     account_info = verify_practice_account()
     account_currency = account_info.get("currency", "USD")
 
-    real_specs = get_instrument_trading_specs([spec.oanda_symbol for spec in INSTRUMENTS.values()])
+    real_specs = get_instrument_trading_specs([INSTRUMENTS[s].oanda_symbol for s in PORTFOLIO_SYMBOLS])
 
     state = LiveRiskState.load_or_create(starting_equity=float(account_info.get("balance", 0.0)))
     last_seen_ts = {}
