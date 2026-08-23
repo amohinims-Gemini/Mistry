@@ -46,6 +46,19 @@ REQUEST_PAUSE_SECONDS = 0.3    # be polite to OANDA between paginated requests
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_cache")
 
 
+REQUEST_TIMEOUT_SECONDS = 30  # (connect, read) timeout passed straight to `requests` - without
+                               # this, oandapyV20's underlying requests.Session has NO timeout at
+                               # all, so a connection that stalls silently (accepted, then no
+                               # response) blocks forever. Found live via live/run_live.py, which
+                               # calls get_instrument_data() below every cycle: a run hung for over
+                               # two days mid-candle-fetch, invisible to both the per-cycle
+                               # try/except (never got control back) and the 24h max-runtime cap
+                               # (only checked between cycles). Backtests are less exposed (one
+                               # long-lived process, not an unattended loop) but get the same fix
+                               # for free since get_client() is shared by both. See
+                               # live/oanda_live_client.py's identical constant/comment.
+
+
 def get_client():
     """Create an authenticated, read-only OANDA API client. Raises a
     clear error if the token is missing, so callers can fall back to
@@ -55,7 +68,8 @@ def get_client():
             "OANDA_API_TOKEN is not set. Copy .env.example to .env and fill "
             "in your OANDA demo account credentials."
         )
-    return oandapyV20.API(access_token=OANDA_API_TOKEN, environment=OANDA_ENVIRONMENT)
+    return oandapyV20.API(access_token=OANDA_API_TOKEN, environment=OANDA_ENVIRONMENT,
+                           request_params={"timeout": REQUEST_TIMEOUT_SECONDS})
 
 
 def _cache_path(oanda_symbol, granularity):

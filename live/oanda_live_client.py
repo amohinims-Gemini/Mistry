@@ -41,12 +41,27 @@ OANDA_ACCOUNT_ID = os.environ.get("OANDA_ACCOUNT_ID")
 CLIENT_TAG = "mistry-live-v1"
 
 
+REQUEST_TIMEOUT_SECONDS = 30  # (connect, read) timeout passed straight to `requests` - without
+                               # this, oandapyV20's underlying requests.Session has NO timeout at
+                               # all, so a connection that stalls silently (accepted, then no
+                               # response - not a clean error) blocks forever. Found live: a
+                               # run_live.py process hung mid-cycle for over two days, invisible to
+                               # both the per-cycle try/except (never got control back to catch
+                               # anything) and the 24h max-runtime cap (only checked BETWEEN
+                               # cycles, never during one stuck inside a single blocking call).
+                               # 30s is generous for OANDA's normal latency + pagination while
+                               # still bounding the failure - once it fires, requests raises a
+                               # normal Timeout exception, which the existing per-cycle handling
+                               # already catches and logs like any other transient error.
+
+
 def get_live_client():
     if not OANDA_API_TOKEN:
         raise RuntimeError("OANDA_API_TOKEN not set - see .env.example.")
     if not OANDA_ACCOUNT_ID:
         raise RuntimeError("OANDA_ACCOUNT_ID not set - see .env.example.")
-    return oandapyV20.API(access_token=OANDA_API_TOKEN, environment=OANDA_ENVIRONMENT)
+    return oandapyV20.API(access_token=OANDA_API_TOKEN, environment=OANDA_ENVIRONMENT,
+                           request_params={"timeout": REQUEST_TIMEOUT_SECONDS})
 
 
 def get_account_summary():

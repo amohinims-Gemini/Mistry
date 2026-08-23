@@ -1,17 +1,24 @@
 # Mistry
 
-A multi-instrument, multi-timeframe trend/breakout trading strategy,
-backtested with a custom portfolio-aware simulation engine against real
-historical data from OANDA.
+A multi-instrument systematic FX/gold trading research project: a
+custom portfolio-aware backtesting engine, a rigorous validation
+process, and a demo-account execution connector - built out to test
+whether any of several standard technical trading signals hold up to
+real scrutiny on real historical data from OANDA. **The systematic
+search concluded without finding a robust edge** - see "Current, honest
+status" immediately below before reading anything else here.
 
 **This is a learning/research project, not financial advice.**
 
-**BACKTEST ONLY.** Nothing in this project places real trades yet. The
-only OANDA API usage in the committed backtest is a read-only historical-
-candles fetch (`data_fetch.py`) - no order, trade, or account-
-modification endpoint is called there. A separate, **incomplete and
-unfinished** live-demo-trading connector lives in `live/` - see "Live
-trading (paused, incomplete)" below before assuming it does anything.
+**No real (non-demo) money is or has ever been involved.** The backtest
+never places real trades - the only OANDA API usage there is a read-only
+historical-candles fetch (`data_fetch.py`). A separate live-demo-trading
+connector in `live/` **has placed real orders on an OANDA PRACTICE
+(demo) account** - multiple times, verified end-to-end, including
+finding and fixing three real bugs along the way (see "Live trading"
+below) - but it has only ever run an explicitly unvalidated placeholder
+strategy, purely to prove the execution plumbing works, never a strategy
+this project actually trusts.
 
 ## Setup
 
@@ -32,8 +39,33 @@ pytest tests/ -v
 
 ## Current, honest status
 
-Trained on 2020-08-13 to 2024-10-25, tested out-of-sample on 2024-10-25
-to 2026-08-13 (real OANDA history):
+**The systematic search for a robust trading edge is CONCLUDED (not
+just paused) as of this point.** Nine independent axes were tried -
+3 signal classes (trend-following, mean-reversion, time-series
+momentum), 3 timeframes (1H, 4H, daily), 5 instruments, a portfolio
+combination, a full reward:risk sweep, and 2 independent confirmation-
+filter variants - and every one of them converged on the same result:
+win rate landing within a few points of whatever breakeven the payout
+structure implied, profit factor capped around 0.9-1.1, never robustly
+clearing the 1.2 bar. See "Systematic strategy search: concluded" below
+for the full comparison table and the reasoning behind stopping here
+rather than continuing to test variations.
+
+What remains from this project: a well-tested backtest engine, a
+genuinely rigorous validation process (documented at length below,
+including every case where that process caught a promising-looking
+result that didn't hold up), and a live demo-execution connector that's
+been verified end-to-end against a real OANDA practice account. What
+does NOT remain: a strategy this project would actually recommend
+trading. Read everything below as "the honest record of a real search
+that came up empty," not as a working system.
+
+### The original 1H strategy, for reference
+
+The ORIGINAL spec strategy (4H trend filter / 1H entry, both described
+under "The strategy" below) is the one config that ever passed a single
+train/test split, trained on 2020-08-13 to 2024-10-25 and tested
+out-of-sample on 2024-10-25 to 2026-08-13 (real OANDA history):
 
 | | Training | Testing (unseen) |
 |---|---|---|
@@ -44,14 +76,15 @@ to 2026-08-13 (real OANDA history):
 
 This **passes all 4 of the spec's bars** on this one split. It is **not
 robust** - an 11-scenario stress test (different train/test splits plus
-independent historical windows) shows the current default configuration
-only clears every bar in about 2 of 11 scenarios, with genuinely bad
-tail-risk drawdowns (worst observed: 28% test, 44% train) in adverse
-windows. Treat the single-split PASS above as "true on this data, not
-evidence of a robust edge" - see "Tuning history" for the full,
-unflattering story of how this was found out.
+independent historical windows) shows this configuration only clears
+every bar in about 2 of 11 scenarios, with genuinely bad tail-risk
+drawdowns (worst observed: 28% test, 44% train) in adverse windows.
+Treat the single-split PASS above as "true on this data, not evidence
+of a robust edge" - see "Tuning history" for the full, unflattering
+story of how this was found out, and everything tried afterward to
+improve on it.
 
-### Systematic strategy search: on hold
+### Systematic strategy search: concluded
 
 Beyond the original 1H strategy above, this project tried a wide sweep
 of alternatives - a from-scratch mean-reversion strategy, single-
@@ -77,39 +110,63 @@ either.** Summary (see "Tuning history" items 13+ for the full detail):
 | 4H trend-following R:R sweep (2:1 down to 1:1, stop fixed) | Win rate climbs cleanly as hypothesized (34.8%->52.5%) but profit factor stays flat (0.965-1.094) regardless - the higher win rate is paid for by proportionally smaller wins; best PF still well short of 1.2 |
 | Dual-confirmation (trend-following AND momentum must agree), momentum lookback=20 | Byte-for-byte IDENTICAL to the unfiltered trend baseline - proven algebraically to be a tautology when both signals share the same 20-bar window, not an empirical finding |
 | Dual-confirmation, momentum lookback swept 25-150 (genuinely independent of the 20-bar channel) | No improvement - 6 of 7 configs WORSE than the unfiltered baseline (requiring agreement filtered out profitable trades along with bad ones); best case merely matched baseline, never beat it |
+| Volatility-expansion confirmation (require ATR > its own 20-bar average) | Decisively worse on every dimension - trade count collapsed to 74 combined (below the 150 minimum), win rate dropped below the R:R breakeven (30-31% vs baseline 34-39%), PF fell below 1.0 in both periods. A genuine re-test of an idea tried once before on the original 1H strategy (also made things worse there) - landed in the same place on a different construction |
 
-The systematic search across every entry-logic family tried so far
+The systematic search across every entry-logic family tried
 (EMA-trend/channel-breakout, Bollinger/RSI mean-reversion, and raw
 time-series momentum - three mechanically distinct signal classes, not
-variations on one idea) is **on hold** as of this point - not because
-any one bug was found, but because moving to a lower-noise timeframe
-(4H, then daily) consistently traded away edge without producing
-robustness in return, combining the two surviving 4H strategies made
-things worse rather than better despite genuinely uncorrelated trades
-(see item 17), and a completely different signal construction
-(momentum, item 21) landed in the same near-33%-win-rate, sub-1.0-PF
-territory as channel breakout did, across a wide range of lookbacks.
-Since then, a relative-value/pairs approach (EUR_USD vs GBP_USD) checked
-out weak even at the cheap-approximation stage and wasn't built further
-(item 24), a fifth instrument (AUD_USD) failed more clearly than the
-existing basket on the same strategy (item 25), and a direct test of
-the R:R hypothesis - lower the target so the win rates actually being
-achieved (26-52%) can clear the profit-factor bar - found win rate
-climbing exactly as expected but profit factor staying flat regardless
-of R:R (item 26). A dual-confirmation filter (require trend-following
-AND an independent momentum signal to agree, item 27) added one more
-data point: no improvement, mostly worse than taking the trend signal
-unfiltered. The consistent convergence of unrelated instruments, signal
-constructions, payout structures, AND confirmation approaches on the
-same mediocre outcome is itself the finding - it points toward a hard
-limit somewhere in this general approach (systematic technical entry
-signals on retail FX majors at this trade frequency), not a specific
-idea, instrument, or parameter worth retrying. What's left unexplored:
-a volatility-expansion confirmation filter (a different, not-yet-tried
-lens than momentum agreement), the full (not approximate) relative-
-value engine, a structurally different edge entirely (not a technical
-entry signal), or accepting the original 1H strategy's documented lack
-of robustness.
+variations on one idea) moved through a lower-noise timeframe (4H, then
+daily), a combined portfolio of the two surviving 4H strategies (worse
+than either alone, despite genuinely uncorrelated trades - item 17), a
+completely different signal construction (momentum, item 21, landing in
+the same territory as channel breakout across a wide range of
+lookbacks), a relative-value/pairs approach that checked out weak even
+at the cheap-approximation stage (item 24), a fifth instrument that
+failed more clearly than the existing basket (item 25), a direct test
+of the reward:risk structure itself (item 26, win rate climbing exactly
+as hypothesized while profit factor stayed flat regardless), and two
+independent confirmation-filter variants (items 27-28, both making
+things worse, not just failing to help). Nine independent axes, all
+converging on the same outcome: win rate landing within a few points of
+whatever breakeven the payout structure implies, profit factor capped
+around 0.9-1.1, never robustly clearing 1.2.
+
+**This is now a decision, not just an observation: the search is
+CONCLUDED, not paused.** When one idea fails, that's a fact about the
+idea. When trend-following, mean-reversion, and momentum all land in
+the same narrow band, and independent confirmation filters make things
+worse rather than better, and changing the payout structure just trades
+win rate for reward size with no net gain - that stops being a fact
+about any one idea and becomes evidence about the market itself: major
+FX pairs and gold are among the most liquid, heavily-arbitraged
+instruments that exist, and simple, well-known technical patterns are
+exactly the signals well-capitalized participants compete away fastest.
+This project's validation discipline (distrust noisy sweep curves,
+never trust a single split, stress-test before believing anything) did
+its job throughout - it prevented false confidence at several points
+(see items 4-7's channel-length saga, item 14's noisy Bollinger-width
+curve) - but preventing false confidence is not the same as guaranteeing
+an edge exists to eventually find.
+
+What was considered and explicitly NOT pursued, with reasons:
+- **The full (non-approximate) relative-value/pairs engine** - the
+  cheap check specifically built to gate this decision came back weak
+  (item 23-24); building the expensive real engine anyway would mean
+  ignoring the result of the check designed to inform exactly this call.
+- **Exit-logic changes** (trailing stops, time-based exits) - never
+  tested on the current infrastructure, but the diagnostic pattern
+  throughout (win rate consistently at the R:R-implied breakeven, not a
+  skewed win/loss shape a smarter exit could capture) points at entries
+  lacking real directional edge, not at good entries being exited
+  poorly. Low-promise by that reasoning, not tried.
+- **A fundamentally different data source** (calendar/seasonality,
+  order-flow) - the most genuine remaining idea, but this project has
+  no infrastructure for it and no adequate data (OANDA's "volume" here
+  is a tick-count proxy, not real volume; no real economic calendar
+  feed - see "Known approximations" below) to backtest it honestly.
+- **A broader instrument universe** - the one new instrument tried
+  (AUD_USD) failed more clearly than the existing basket, weak evidence
+  against this being fruitful.
 
 ## The strategy
 
@@ -434,19 +491,42 @@ this history to preserve.
     improvement - 6 of 7 configs were WORSE than the unfiltered baseline,
     the best case merely matched it. Requiring independent agreement
     filtered out profitable trades along with bad ones, net negative.
-28. **The systematic search is paused again** - see "Systematic
-    strategy search: on hold" above for the full comparison table across
-    every instrument, timeframe, signal class, payout structure, and now
-    confirmation-filter approach tried. The consistent convergence of
-    all of them on the same mediocre outcome is now the headline
-    finding, not any individual result.
+28. **A second confirmation-filter variant was tried and also failed**:
+    volatility-expansion (require ATR to genuinely exceed its own 20-bar
+    rolling average, `Signal4HConfig.use_volatility_filter`), tested the
+    same cheap-check-first way. Decisively worse on every dimension -
+    trade count collapsed to 74 combined (below the 150 minimum), win
+    rate dropped BELOW the R:R breakeven (30-31% vs baseline's 34-39%),
+    profit factor fell below 1.0 in both periods. A volatility filter was
+    tried once before on the original 1H strategy and also made things
+    worse there (item 3) - this was a genuine re-test on a different,
+    later construction (single-timeframe 4H, after several unrelated
+    fixes), not just repeating the same experiment, but it landed in the
+    same place.
+29. **Stepped back from confirmation-filter variants as a family**
+    (two tried, both failed clearly) rather than continuing to test more
+    of them, and took stock of the full search across every axis tried.
+30. **The systematic search is CONCLUDED**, not paused - a deliberate
+    decision, not just an observation. Nine independent axes (signal
+    class, timeframe, instrument, portfolio combination, payout
+    structure, confirmation filters) all converged on the same outcome;
+    see "Systematic strategy search: concluded" above for the full
+    comparison table, the reasoning behind concluding rather than
+    continuing, and the specific remaining options considered and
+    explicitly not pursued (the full pairs engine, exit-logic changes, a
+    fundamentally different data source, a broader instrument universe)
+    with reasons for each. What remains from this project: a well-tested
+    backtest engine, a genuinely rigorous validation process, and a live
+    demo-execution connector verified end-to-end against a real OANDA
+    practice account - not a strategy this project would recommend
+    trading.
 
 **Bottom line:** every "this fixes it" moment in this history except the
 efficiency-ratio filter (item 9) was later found to be wrong or to not
 generalize, and the broader search across timeframes, a combined
 portfolio, a genuinely different signal class, a new instrument, a
-direct test of the payout structure itself, and a dual-confirmation
-filter (items 13-28) didn't find anything that did generalize either.
+direct test of the payout structure itself, and two confirmation-filter
+variants (items 13-30) didn't find anything that did generalize either.
 The efficiency-ratio filter
 remains the one piece of real, partially-
 validated signal found so far - not strong enough on its own to call any
@@ -525,7 +605,7 @@ server, including a real order** - see "What actually happened" below.
   turned out not to be a reliable way to watch a redirected/background run).
 - `run_live.py` - the main loop. Plugs in `signals_4h.py` as a
   deliberately swappable PLACEHOLDER strategy - it failed this
-  project's validation bars (see "Systematic strategy search: on hold"
+  project's validation bars (see "Systematic strategy search: concluded"
   above) and every startup banner/log line says so; this run exists to
   prove the plumbing, not to trade profitably. Polls every 5 minutes,
   only acting on a genuinely new closed 4H candle. Three independent
