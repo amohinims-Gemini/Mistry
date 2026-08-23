@@ -307,7 +307,7 @@ Not deleted, per explicit decision: `signals_london_sweep_m15.py`,
 as a complete, working, honestly-labeled failed experiment - the same
 philosophy already applied to the concluded systematic search above.
 
-## London Liquidity Sweep Reversal V2 - Higher-Timeframe Trend-Aligned (built, not yet run)
+## London Liquidity Sweep Reversal V2 - Higher-Timeframe Trend-Aligned - REJECTED after development testing
 
 Treated as a genuinely new hypothesis, not a V1 parameter tweak - built
 as a separate module that imports and reuses V1's sweep+confirmation
@@ -353,11 +353,49 @@ no better than - or worse than - V1's already-rejected baseline; or the
 trend filter leaves too few trades to read at all (a real risk, since it
 will likely roughly halve V1's already-modest 161-trade sample).
 
-**Status**: built and tested (59/59 project tests passing, 7 new).
-**Not yet run.** `risk_management.py`, `backtest_engine.py`,
-`instruments.py`, the GBP-account currency-conversion logic, and the
-entire `live/` connector remain untouched. Validation and final-reserved
-data have not been accessed.
+**Status**: built and tested (59/59 project tests passing, 7 new), then
+run on development data. **Rejected.** `risk_management.py`,
+`backtest_engine.py`, `instruments.py`, the GBP-account currency-
+conversion logic, and the entire `live/` connector remain untouched
+throughout. Validation and final-reserved data were never accessed.
+
+### V2 round 1 result on DEVELOPMENT data - REJECTED
+
+82 completed trades (EUR_USD 42, GBP_USD 40) - roughly half of V1's 161,
+as expected from the trend filter. **Worse than V1 on every dimension,
+not just fewer trades:**
+
+| | Trades | Win rate | PF | Net P&L (USD) | Expectancy/trade |
+|---|---|---|---|---|---|
+| V1 (unfiltered) | 161 | 39.8% | 0.659 | -$796.84 | -$4.95 |
+| **V2 (trend-aligned)** | 82 | **29.3%** | **0.414** | -$817.17 | **-$9.97** |
+
+Per-trade loss nearly doubled. Total dollar loss is *larger* than V1's
+despite half as many trades.
+
+**The central hypothesis was directly refuted, not just unconfirmed.**
+V1's long side alone was PF 0.977 (near breakeven) - V2 existed
+specifically to test whether trend alignment explained and could
+preserve that. Instead, "trend-aligned longs" came in at **PF 0.393** -
+dramatically worse than V1's unfiltered longs, the opposite of what the
+hypothesis predicted. If trend alignment were the real explanation for
+V1's asymmetry, filtering to alignment should have held or improved that
+0.977; it collapsed instead.
+
+**Against the pre-committed rejection criteria** (decided before this
+run - see above): fails the standing bar (82<150 trades, PF 0.414<1.2,
+negative return) - yes. Performs no better than, or worse than, V1's
+baseline - yes, worse on every metric. Too few trades to read - a
+contributing factor, not the deciding one given the other two. **All
+three criteria met. V2 does not proceed to validation.**
+
+Full trade-level data: `results/london_sweep_v2_round1_development_trades.csv`.
+Full structured summary: `results/london_sweep_v2_round1_summary.json`.
+
+Not deleted, per the same decision as V1:
+`signals_london_sweep_trend_aligned_m15.py`,
+`run_london_sweep_trend_aligned_backtest.py`, and their tests remain in
+the repository as a complete, honestly-labeled failed experiment.
 
 ## The strategy
 

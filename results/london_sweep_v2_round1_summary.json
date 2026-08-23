@@ -1,0 +1,80 @@
+{
+  "generated": "development-data-only re-run, unchanged V2 code/config",
+  "strategy_module": "signals_london_sweep_trend_aligned_m15.py (unchanged) - reuses signals_london_sweep_m15.py (V1) unchanged for sweep+confirmation",
+  "config": "TrendAlignedLondonSweepConfig(sweep_config=LondonSweepConfig(asian_start_hour=0, asian_end_hour=7, london_window_start_hour=7, london_window_end_hour=10, atr_period=14, stop_buffer_atr_fraction=0.1, target_rr_multiple=1.0, spread_avg_window=100), trend_ema_fast_period=50, trend_ema_slow_period=200)",
+  "development_window": "2020-08-24 to 2024-07-15 (dataset_split.DEVELOPMENT_START/END)",
+  "currency_note": "All $ figures are USD, same as V1 - see V1's summary for detail.",
+  "overall": {
+    "EUR_USD": {
+      "n": 42,
+      "win_rate_pct": 28.57,
+      "profit_factor": 0.4008,
+      "net_pnl": -430.74,
+      "avg_r": -0.4286
+    },
+    "GBP_USD": {
+      "n": 40,
+      "win_rate_pct": 30.0,
+      "profit_factor": 0.4277,
+      "net_pnl": -386.43,
+      "avg_r": -0.4
+    }
+  },
+  "combined": {
+    "n": 82,
+    "win_rate_pct": 29.27,
+    "profit_factor": 0.4138,
+    "net_pnl": -817.17,
+    "avg_r": -0.4146
+  },
+  "by_direction": {
+    "long": {
+      "n": 39,
+      "win_rate_pct": 28.21,
+      "profit_factor": 0.3926,
+      "net_pnl": -402.97,
+      "avg_r": -0.4359
+    },
+    "short": {
+      "n": 43,
+      "win_rate_pct": 30.23,
+      "profit_factor": 0.4331,
+      "net_pnl": -414.19,
+      "avg_r": -0.3953
+    }
+  },
+  "v1_comparison": {
+    "v1_combined": {
+      "n": 161,
+      "win_rate_pct": 39.8,
+      "profit_factor": 0.659,
+      "net_pnl": -796.84
+    },
+    "v2_combined": {
+      "n": 82,
+      "win_rate_pct": 29.27,
+      "profit_factor": 0.4138,
+      "net_pnl": -817.17,
+      "avg_r": -0.4146
+    },
+    "v1_long": {
+      "n": 75,
+      "win_rate_pct": 49.3,
+      "profit_factor": 0.977,
+      "net_pnl": -21.31
+    },
+    "v2_long": {
+      "n": 39,
+      "win_rate_pct": 28.21,
+      "profit_factor": 0.3926,
+      "net_pnl": -402.97,
+      "avg_r": -0.4359
+    }
+  },
+  "pre_committed_rejection_criteria_evaluation": {
+    "fails_standing_bar": "YES - 82 trades (<150), PF 0.414 (<1.2), negative return",
+    "no_better_or_worse_than_v1": "WORSE - lower win rate, lower PF, larger per-trade expectancy loss than V1's unfiltered baseline",
+    "too_few_trades_to_read": "contributing factor (82 vs 150 reference), not the deciding factor given the other two criteria"
+  },
+  "verdict": "REJECTED - V2's central hypothesis (trend alignment explains/improves V1's long/short asymmetry) is directly refuted, not just unconfirmed. V1's long side alone was PF 0.977 (near breakeven); filtering to trend-aligned longs collapsed that to PF 0.393 - the opposite of what the hypothesis predicted. All three pre-committed rejection criteria met. V2 does not proceed to validation."
+}
