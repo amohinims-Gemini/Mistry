@@ -44,6 +44,21 @@ class Signal4HConfig:
     atr_period: int = 14
     spread_avg_window: int = 100
 
+    # Volatility-expansion confirmation - OFF by default (same pattern as
+    # every other optional filter in this project). Requires ATR to be
+    # genuinely expanding (above its own recent average), not just a
+    # breakout happening during otherwise-normal/quiet conditions. A
+    # volatility filter was tried once before on the ORIGINAL 1H strategy
+    # (signals.py) and made things worse there - but that was a different
+    # construction (1H entry, 4H trend, two clocks) tested before several
+    # unrelated fixes landed; worth a genuine re-test on this single-
+    # timeframe 4H construction, not assumed to fail the same way.
+    use_volatility_filter: bool = False
+    volatility_avg_window: int = 20         # matches the channel-period convention used elsewhere
+    volatility_expansion_multiple: float = 1.0  # ATR must exceed this x its own rolling average -
+                                                  # 1.0 is the simplest literal reading of "expanding
+                                                  # above its recent average", not yet a tuned value
+
 
 DEFAULT_SIGNAL_4H_CONFIG = Signal4HConfig()
 
@@ -82,7 +97,21 @@ def prepare_instrument_frame(h4_df, config=DEFAULT_SIGNAL_4H_CONFIG):
     df["avg_spread_100"] = df["spread_close"].rolling(config.spread_avg_window).mean().shift(1)
 
     # --- The two mirrored entry rules ---
-    df["signal_long"] = df["trend_up"] & (df["Close"] > df["breakout_high"])
-    df["signal_short"] = df["trend_down"] & (df["Close"] < df["breakout_low"])
+    signal_long = df["trend_up"] & (df["Close"] > df["breakout_high"])
+    signal_short = df["trend_down"] & (df["Close"] < df["breakout_low"])
+
+    # --- Optional volatility-expansion confirmation ---
+    # No .shift() needed: ATR (and its own rolling average) legitimately
+    # includes the current bar - both are fully known as of this bar's
+    # close, the same no-lookahead reasoning already applied to ATR and
+    # the Efficiency Ratio elsewhere in this project.
+    if config.use_volatility_filter:
+        avg_atr = df["atr"].rolling(config.volatility_avg_window).mean()
+        volatility_expanding = df["atr"] > config.volatility_expansion_multiple * avg_atr
+        signal_long = signal_long & volatility_expanding
+        signal_short = signal_short & volatility_expanding
+
+    df["signal_long"] = signal_long
+    df["signal_short"] = signal_short
 
     return df
