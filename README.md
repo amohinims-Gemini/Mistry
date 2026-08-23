@@ -168,16 +168,20 @@ What was considered and explicitly NOT pursued, with reasons:
   (AUD_USD) failed more clearly than the existing basket, weak evidence
   against this being fruitful.
 
-## Next: London Liquidity Sweep Reversal (data split approved, strategy not yet built)
+## London Liquidity Sweep Reversal V1 - REJECTED after development testing
 
 A genuinely different, structural idea, not a variant of anything in
-the concluded search above - not yet built. Before writing any strategy
-code, this project's existing infrastructure was audited (which parts
-are strategy-agnostic and safe to reuse vs. which parts belong to the
-concluded, failed strategies and must not be), and a stricter data
-discipline was put in place first: a three-way chronological split
-(`dataset_split.py`), not the two-way train/test split used for every
-strategy tried so far.
+the concluded search above. Built, tested, run on development data, and
+**rejected** - it does not show a robust edge. Full diagnostic evidence
+below; raw results permanently preserved in `results/` so this exact
+experiment never needs re-running.
+
+Before writing any strategy code, this project's existing infrastructure
+was audited (which parts are strategy-agnostic and safe to reuse vs.
+which parts belong to the concluded, failed strategies and must not be),
+and a stricter data discipline was put in place first: a three-way
+chronological split (`dataset_split.py`), not the two-way train/test
+split used for every strategy tried so far.
 
 M15 candle data for EUR_USD/GBP_USD was fetched and its actual
 availability confirmed directly (2020-08-24 to 2026-08-21 - eleven days
@@ -215,8 +219,145 @@ changed.
 
 Nothing else changed - `risk_management.py`, `backtest_engine.py`,
 `instruments.py`, the GBP-account currency-conversion logic, and the
-entire `live/` connector are untouched. No strategy signal logic has
-been written yet.
+entire `live/` connector are untouched throughout everything below.
+
+### V1 design (round 1)
+
+M15, EUR_USD/GBP_USD only. Asian range (00:00-07:00 Europe/London LOCAL
+time, DST-aware via `zoneinfo`) built from completed bars only, blanked
+out and frozen with the same no-lookahead discipline `signals.py`'s
+4H/1H merge already established. During the London entry window
+(07:00-10:00 local), a sweep beyond the Asian high/low is never itself
+an entry - the first candle (same or later) that closes back inside the
+range fires the signal. At most one trade per instrument per day.
+No RSI/MACD/EMA confirmation - the close-back-inside structure is the
+confirmation. Stop-loss structural (beyond the sweep's own extreme +
+0.1x ATR buffer, not a flat ATR multiple like every prior strategy);
+target a fixed 1:1 R:R. Both flow through the unchanged
+`calculate_position_size()` via the same `stop_distance_override`
+mechanism `combined_signals_4h.py` established. Sweep penetration
+recorded (price/pips/ATR) on every setup, never used as a filter.
+See `signals_london_sweep_m15.py` for the full implementation and
+`tests/test_london_sweep_signals.py` (20 tests) for coverage of BST/GMT
+transitions, Asian-range boundaries, no-lookahead, sweep/confirmation
+logic, one-trade-per-day, stop/target math, and the validation/reserved-
+period access guard.
+
+### V1 round 1 result on DEVELOPMENT data - REJECTED
+
+161 completed trades (EUR_USD 80, GBP_USD 81) over the full development
+window. **Net losing, consistently across both instruments:**
+
+| | Trades | Win rate | PF | Net P&L (USD) | Avg R |
+|---|---|---|---|---|---|
+| EUR_USD | 80 | 40.0% | 0.668 | -$383.13 | -0.200 |
+| GBP_USD | 81 | 39.5% | 0.650 | -$413.71 | -0.210 |
+| Combined | 161 | 39.8% | **0.659** | -$796.84 | -0.205 |
+
+**Currency note, found while running this**: `backtest_engine.py`/
+`risk_management.py` never pass `account_currency` to
+`value_per_price_unit()`/`notional_value_per_unit()` anywhere, so the
+backtest has always defaulted to USD - for every strategy ever tested in
+this project, including this one - despite the live account being
+GBP-denominated. The live connector and the GBP position-sizing tests
+are correctly wired; the backtest engine itself simply never was. Not
+changed (out of scope, and would affect every historical backtest result
+in this project, not just this one) - flagged honestly instead.
+
+**Diagnostic findings** (full trade-level data: `results/london_sweep_v1_round1_development_trades.csv`;
+full structured summary: `results/london_sweep_v1_round1_summary.json`):
+
+- **Severe long/short asymmetry, consistent across both instruments**:
+  long PF 0.977 (near breakeven), short PF 0.455 (badly losing) -
+  EUR_USD short 0.446, GBP_USD short 0.462. Nearly the entire loss is
+  carried by the short side. This is the single strongest pattern found.
+- **Losing trades reverse almost immediately, not near-misses**: for the
+  97 stopped-out trades, median MFE (maximum favorable excursion before
+  exit) was 0.112R - 61% never even reached 0.25R favorably before
+  reversing. This rules out the 1:1 target being "too far away" as the
+  cause; a tighter target would only have rescued a small minority.
+- **Transaction costs are not the driver**: total entry-side cost (the
+  only cost this engine models on this strategy - exits use precomputed
+  levels with no further cost) was $441.68 across all 161 trades
+  ($2.74/trade average). Zero trades were losses that would have been
+  wins without that cost. Removing it entirely still leaves PF 0.826 and
+  a net loss.
+- **Sweep penetration size shows a real but incomplete effect**: `<3
+  pips` (n=71) PF 0.508 vs `>=3 pips` (n=90) PF 0.801 - tiny sweeps are
+  genuinely worse, but the larger-sweep bucket is *still losing*, ruling
+  out "just filter out small/noisy sweeps" as a fix on its own. Finer
+  pip/ATR buckets showed a non-monotonic shape (best bucket sits in the
+  middle, on ~31 trades) - the kind of curve this project has
+  consistently learned to distrust rather than chase.
+- **No clean time-of-day effect** (07:00-08:00 PF 0.629, 08:00-09:00 PF
+  0.817, 09:00-10:00 PF 0.407 on only 14 trades - too thin to read).
+
+**Verdict**: the underlying reversal hypothesis itself, not the R:R,
+stop placement, or transaction costs, appears to be the primary source
+of failure - and it fails asymmetrically by direction. The long/short
+split is real and worth carrying forward as a lead, but wasn't predicted
+in advance (it was found by inspecting these results), so it isn't
+treated as validated evidence of a working strategy on its own -
+consistent with this project's standing discipline against acting on
+patterns discovered by looking at results rather than predicted
+beforehand. **V1 does not proceed to validation.**
+
+Not deleted, per explicit decision: `signals_london_sweep_m15.py`,
+`run_london_sweep_backtest.py`, and their tests remain in the repository
+as a complete, working, honestly-labeled failed experiment - the same
+philosophy already applied to the concluded systematic search above.
+
+## London Liquidity Sweep Reversal V2 - Higher-Timeframe Trend-Aligned (built, not yet run)
+
+Treated as a genuinely new hypothesis, not a V1 parameter tweak - built
+as a separate module that imports and reuses V1's sweep+confirmation
+logic completely unchanged, rather than modifying V1's config. V1 stays
+independently re-runnable exactly as concluded.
+
+**Research question**: does a London liquidity sweep have positive
+expectancy when the reversal direction is aligned with the established
+higher-timeframe market trend?
+
+**Trend definition**: daily EMA(50) vs EMA(200) - the same measure and
+periods already used everywhere else in this project (`signals.py`,
+`signals_4h.py`, `signals_daily.py`), computed on daily closes. One
+fixed definition, not searched or swept across period combinations.
+
+**Rule**: V1's sweep+confirmation fires exactly as before. A long
+reversal is kept only if the daily trend is up; a short reversal is
+kept only if the daily trend is down. A signal against the trend is
+dropped entirely, never flipped into a countertrend trade.
+
+**Rationale**: a sweep with the higher-timeframe trend looks more like
+a genuine stop-hunt that resumes the dominant order flow; a sweep
+against it has to argue price reverses against the larger prevailing
+flow on local, session-scale evidence alone. This is a direct,
+falsifiable attempt to explain V1's own strongest diagnostic finding -
+the severe long/short asymmetry - rather than a new, unmotivated guess.
+
+**No lookahead**: daily EMA50/200 computed on daily closes, index
+shifted forward by exactly one full day (a daily candle here is indexed
+by its 21:00 UTC OPEN but isn't knowable until it closes 24 hours
+later), then `merge_asof(direction="backward")` onto the M15 timeline -
+the exact "shift by this candle's own bar duration" mechanism
+`signals.py`'s 4H/1H merge already established, reused rather than
+reinvented for the daily/M15 case. See
+`tests/test_london_sweep_trend_aligned_signals.py` (7 tests) for
+coverage of the trend-alignment gate (kept/dropped in each direction,
+overrides cleaned up on drop) and the no-lookahead shift specifically.
+
+**Pre-committed rejection criteria** (decided before running anything):
+fails this project's standing bar (150+ trades, PF > 1.2, positive OOS
+return, max drawdown < 10% on a single development split); or performs
+no better than - or worse than - V1's already-rejected baseline; or the
+trend filter leaves too few trades to read at all (a real risk, since it
+will likely roughly halve V1's already-modest 161-trade sample).
+
+**Status**: built and tested (59/59 project tests passing, 7 new).
+**Not yet run.** `risk_management.py`, `backtest_engine.py`,
+`instruments.py`, the GBP-account currency-conversion logic, and the
+entire `live/` connector remain untouched. Validation and final-reserved
+data have not been accessed.
 
 ## The strategy
 
@@ -817,8 +958,13 @@ results ever look unexpectedly off, check the run's output for a
 | File | Purpose |
 |---|---|
 | `instruments.py` | Per-instrument specs (now including `AUD_USD`, added for a standalone check - see "Tuning history" item 25), pip/notional value math (incl. cross-currency), correlation group, spread cap, swap rates; `PORTFOLIO_SYMBOLS` is the explicit 4-instrument list every multi-instrument script actually trades, kept separate from the full registry |
-| `dataset_split.py` | Three-way chronological DEVELOPMENT/VALIDATION/FINAL RESERVED split for the London Liquidity Sweep work - see "Next: London Liquidity Sweep Reversal" above. Separate from `run_backtest.py`'s own two-way split, which is unchanged |
-| `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports H1/H4/D granularities |
+| `dataset_split.py` | Three-way chronological DEVELOPMENT/VALIDATION/FINAL RESERVED split for the London Liquidity Sweep work - see "London Liquidity Sweep Reversal V1" above. Separate from `run_backtest.py`'s own two-way split, which is unchanged |
+| `signals_london_sweep_m15.py` | London Liquidity Sweep Reversal V1 - M15, Europe/London session-anchored, structural stop/target. **Rejected after development testing** - see "London Liquidity Sweep Reversal V1" above. Not deleted - kept as a complete, honestly-labeled failed experiment |
+| `run_london_sweep_backtest.py` | Entry point for V1 - EUR_USD/GBP_USD only, `dataset_split.split_for_iteration()` exclusively |
+| `signals_london_sweep_trend_aligned_m15.py` | V2 - imports V1's sweep+confirmation logic unchanged, adds a daily EMA50/200 trend-alignment gate. See "London Liquidity Sweep Reversal V2" above. Built, not yet run |
+| `run_london_sweep_trend_aligned_backtest.py` | Entry point for V2 - same scope as V1's entry point, plus daily candle data for the trend gate |
+| `results/` | Permanently preserved raw results from concluded experiments (currently: V1 round 1's full trade-level data + structured summary), so an experiment never needs re-running just to recall what happened |
+| `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports M5/M15/H1/H4/D granularities |
 | `indicators.py` | EMA, ATR, rolling high/low channel, SMA, rolling std, RSI |
 | `signals.py` | Original 4H-trend/1H-entry trend-following strategy (merges the 4H trend filter onto the 1H timeline, no lookahead); `SignalConfig` holds all tunable entry-logic parameters |
 | `signals_4h.py` | Single-timeframe 4H trend-following - trend filter and entry trigger both computed from the same 4H series; `Signal4HConfig` |
@@ -836,6 +982,6 @@ results ever look unexpectedly off, check the run's output for a
 | `run_mean_reversion_backtest.py` / `run_mean_reversion_backtest_4h.py` / `run_mean_reversion_backtest_daily.py` | Entry points for the 1H / 4H / daily mean-reversion strategies |
 | `run_combined_backtest_4h.py` | Entry point for the combined 4H trend-following + mean-reversion portfolio |
 | `run_momentum_backtest_4h.py` | Entry point for the 4H time-series momentum strategy, including its lookback sweep |
-| `tests/` | pytest suite - currently covers currency-conversion/position-sizing math (`requirements-dev.txt`) |
+| `tests/` | pytest suite (`requirements-dev.txt`) - currency-conversion/position-sizing math, the dataset-split guard rails, and London Sweep signal logic (BST/GMT, no-lookahead, sweep/confirmation, one-trade-per-day, stop/target math) |
 | `live/` | Demo-trading execution connector - built AND verified against the real OANDA practice server (a real order placed, sized, protected, and closed successfully) - see "Live trading" above |
 | `.env.example` | Template for the environment variables `data_fetch.py`/`live/` need - copy to `.env` |
