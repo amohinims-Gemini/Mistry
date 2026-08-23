@@ -1,0 +1,241 @@
+{
+  "generated": "development-data-only re-run, unchanged Round 1 code/config",
+  "strategy_module": "signals_london_sweep_m15.py (unchanged)",
+  "config": "LondonSweepConfig(asian_start_hour=0, asian_end_hour=7, london_window_start_hour=7, london_window_end_hour=10, atr_period=14, stop_buffer_atr_fraction=0.1, target_rr_multiple=1.0, spread_avg_window=100)",
+  "development_window": "2020-08-24 to 2024-07-15 (dataset_split.DEVELOPMENT_START/END)",
+  "currency_note": "All $ figures are USD - backtest_engine.py/risk_management.py never pass account_currency, so it always defaults to USD, unchanged existing behavior.",
+  "overall": {
+    "EUR_USD": {
+      "n": 80,
+      "win_rate_pct": 40.0,
+      "profit_factor": 0.668,
+      "net_pnl": -383.13,
+      "avg_r": -0.2
+    },
+    "GBP_USD": {
+      "n": 81,
+      "win_rate_pct": 39.51,
+      "profit_factor": 0.6497,
+      "net_pnl": -413.71,
+      "avg_r": -0.2099
+    }
+  },
+  "combined": {
+    "n": 161,
+    "win_rate_pct": 39.75,
+    "profit_factor": 0.6588,
+    "net_pnl": -796.84,
+    "avg_r": -0.205
+  },
+  "by_direction": {
+    "long": {
+      "n": 75,
+      "win_rate_pct": 49.33,
+      "profit_factor": 0.9767,
+      "net_pnl": -21.31,
+      "avg_r": -0.0133
+    },
+    "short": {
+      "n": 86,
+      "win_rate_pct": 31.4,
+      "profit_factor": 0.4545,
+      "net_pnl": -775.53,
+      "avg_r": -0.3721
+    }
+  },
+  "by_direction_per_symbol": {
+    "EUR_USD_long": {
+      "n": 38,
+      "win_rate_pct": 50.0,
+      "profit_factor": 1.0082,
+      "net_pnl": 3.74,
+      "avg_r": 0.0
+    },
+    "EUR_USD_short": {
+      "n": 42,
+      "win_rate_pct": 30.95,
+      "profit_factor": 0.4463,
+      "net_pnl": -386.87,
+      "avg_r": -0.381
+    },
+    "GBP_USD_long": {
+      "n": 37,
+      "win_rate_pct": 48.65,
+      "profit_factor": 0.9453,
+      "net_pnl": -25.05,
+      "avg_r": -0.027
+    },
+    "GBP_USD_short": {
+      "n": 44,
+      "win_rate_pct": 31.82,
+      "profit_factor": 0.4624,
+      "net_pnl": -388.66,
+      "avg_r": -0.3636
+    }
+  },
+  "by_penetration_pips": {
+    "<1": {
+      "n": 25,
+      "win_rate_pct": 32.0,
+      "profit_factor": 0.467,
+      "net_pnl": -220.17,
+      "avg_r": -0.36
+    },
+    "1-3": {
+      "n": 46,
+      "win_rate_pct": 34.78,
+      "profit_factor": 0.5321,
+      "net_pnl": -337.04,
+      "avg_r": -0.3043
+    },
+    "3-5": {
+      "n": 23,
+      "win_rate_pct": 43.48,
+      "profit_factor": 0.7749,
+      "net_pnl": -70.36,
+      "avg_r": -0.1304
+    },
+    "5-10": {
+      "n": 31,
+      "win_rate_pct": 54.84,
+      "profit_factor": 1.2102,
+      "net_pnl": 70.81,
+      "avg_r": 0.0968
+    },
+    ">10": {
+      "n": 36,
+      "win_rate_pct": 36.11,
+      "profit_factor": 0.5653,
+      "net_pnl": -240.07,
+      "avg_r": -0.2778
+    }
+  },
+  "by_penetration_atr": {
+    "<0.05": {
+      "n": 6,
+      "win_rate_pct": 50.0,
+      "profit_factor": 1.0121,
+      "net_pnl": 0.87,
+      "avg_r": 0.0
+    },
+    "0.05-0.15": {
+      "n": 17,
+      "win_rate_pct": 29.41,
+      "profit_factor": 0.4078,
+      "net_pnl": -173.06,
+      "avg_r": -0.4118
+    },
+    "0.15-0.30": {
+      "n": 11,
+      "win_rate_pct": 36.36,
+      "profit_factor": 0.571,
+      "net_pnl": -72.17,
+      "avg_r": -0.2727
+    },
+    "0.30-0.50": {
+      "n": 39,
+      "win_rate_pct": 35.9,
+      "profit_factor": 0.5642,
+      "net_pnl": -260.04,
+      "avg_r": -0.2821
+    },
+    "0.50-1.0": {
+      "n": 38,
+      "win_rate_pct": 44.74,
+      "profit_factor": 0.8036,
+      "net_pnl": -99.91,
+      "avg_r": -0.1053
+    },
+    ">1.0": {
+      "n": 50,
+      "win_rate_pct": 42.0,
+      "profit_factor": 0.7237,
+      "net_pnl": -192.53,
+      "avg_r": -0.16
+    }
+  },
+  "by_entry_hour_london": {
+    "07:00-08:00": {
+      "n": 98,
+      "win_rate_pct": 38.78,
+      "profit_factor": 0.6294,
+      "net_pnl": -536.94,
+      "avg_r": -0.2245
+    },
+    "08:00-09:00": {
+      "n": 49,
+      "win_rate_pct": 44.9,
+      "profit_factor": 0.817,
+      "net_pnl": -118.61,
+      "avg_r": -0.102
+    },
+    "09:00-10:00": {
+      "n": 14,
+      "win_rate_pct": 28.57,
+      "profit_factor": 0.4073,
+      "net_pnl": -141.28,
+      "avg_r": -0.4286
+    }
+  },
+  "milestones_all_trades": {
+    "reached_half_r_pct": 47.8,
+    "reached_1r_pct": 39.8,
+    "reached_midpoint_pct": 36.6,
+    "reached_opposite_side_pct": 14.9
+  },
+  "milestones_losing_trades_only": {
+    "n": 97,
+    "reached_half_r_pct": 13.4,
+    "reached_midpoint_pct": 7.2,
+    "reached_opposite_side_pct": 2.1,
+    "mfe_r_mean": 0.4119,
+    "mfe_r_median": 0.112
+  },
+  "mae_mfe_all_trades_r": {
+    "mae_mean": 1.2783,
+    "mae_median": 1.1197,
+    "mfe_mean": 0.8669,
+    "mfe_median": 0.7727
+  },
+  "transaction_cost": {
+    "total_entry_side_cost_usd": 441.68,
+    "avg_cost_per_trade_usd": 2.74,
+    "trades_flipped_by_cost": 0,
+    "net_pnl_with_cost": -796.84,
+    "net_pnl_without_cost": -355.16,
+    "pf_with_cost": 0.6588,
+    "pf_without_cost": 0.8261
+  },
+  "small_vs_large_sweeps": {
+    "pips_lt_3": {
+      "n": 71,
+      "win_rate_pct": 33.8,
+      "profit_factor": 0.5084,
+      "net_pnl": -557.21,
+      "avg_r": -0.3239
+    },
+    "pips_ge_3": {
+      "n": 90,
+      "win_rate_pct": 44.44,
+      "profit_factor": 0.8006,
+      "net_pnl": -239.62,
+      "avg_r": -0.1111
+    },
+    "atr_lt_0.15": {
+      "n": 23,
+      "win_rate_pct": 34.78,
+      "profit_factor": 0.5278,
+      "net_pnl": -172.18,
+      "avg_r": -0.3043
+    },
+    "atr_ge_0.15": {
+      "n": 138,
+      "win_rate_pct": 40.58,
+      "profit_factor": 0.683,
+      "net_pnl": -624.65,
+      "avg_r": -0.1884
+    }
+  },
+  "rejections_note": "1425 total rejections logged during this run: drawdown_suspended=1412, correlation_limit=8, consecutive_loss_cooldown=3, spread_abnormal=2 - see prior report for full detail; not re-saved here since rejections DataFrame doesn't carry the diagnostic enrichment trades do.",
+  "verdict": "REJECTED - London Liquidity Sweep Reversal V1 does not show a robust edge. PF 0.659 combined, both instruments consistent (0.668/0.650). Losing trades reverse almost immediately (61% never reach 0.25R favorably) rather than nearly reaching the target, ruling out the 1:1 R:R as the primary cause. Transaction costs are negligible (zero trades flipped by cost). Strongest pattern found: severe long/short asymmetry (long PF 0.977, short PF 0.455) consistent across both instruments - flagged as the one lead worth a narrowly-scoped follow-up, not acted on directly since it was found by inspecting results, not predicted in advance."
+}
