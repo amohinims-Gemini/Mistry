@@ -307,6 +307,58 @@ Not deleted, per explicit decision: `signals_london_sweep_m15.py`,
 as a complete, working, honestly-labeled failed experiment - the same
 philosophy already applied to the concluded systematic search above.
 
+## London Liquidity Sweep Reversal V2 - Higher-Timeframe Trend-Aligned (built, not yet run)
+
+Treated as a genuinely new hypothesis, not a V1 parameter tweak - built
+as a separate module that imports and reuses V1's sweep+confirmation
+logic completely unchanged, rather than modifying V1's config. V1 stays
+independently re-runnable exactly as concluded.
+
+**Research question**: does a London liquidity sweep have positive
+expectancy when the reversal direction is aligned with the established
+higher-timeframe market trend?
+
+**Trend definition**: daily EMA(50) vs EMA(200) - the same measure and
+periods already used everywhere else in this project (`signals.py`,
+`signals_4h.py`, `signals_daily.py`), computed on daily closes. One
+fixed definition, not searched or swept across period combinations.
+
+**Rule**: V1's sweep+confirmation fires exactly as before. A long
+reversal is kept only if the daily trend is up; a short reversal is
+kept only if the daily trend is down. A signal against the trend is
+dropped entirely, never flipped into a countertrend trade.
+
+**Rationale**: a sweep with the higher-timeframe trend looks more like
+a genuine stop-hunt that resumes the dominant order flow; a sweep
+against it has to argue price reverses against the larger prevailing
+flow on local, session-scale evidence alone. This is a direct,
+falsifiable attempt to explain V1's own strongest diagnostic finding -
+the severe long/short asymmetry - rather than a new, unmotivated guess.
+
+**No lookahead**: daily EMA50/200 computed on daily closes, index
+shifted forward by exactly one full day (a daily candle here is indexed
+by its 21:00 UTC OPEN but isn't knowable until it closes 24 hours
+later), then `merge_asof(direction="backward")` onto the M15 timeline -
+the exact "shift by this candle's own bar duration" mechanism
+`signals.py`'s 4H/1H merge already established, reused rather than
+reinvented for the daily/M15 case. See
+`tests/test_london_sweep_trend_aligned_signals.py` (7 tests) for
+coverage of the trend-alignment gate (kept/dropped in each direction,
+overrides cleaned up on drop) and the no-lookahead shift specifically.
+
+**Pre-committed rejection criteria** (decided before running anything):
+fails this project's standing bar (150+ trades, PF > 1.2, positive OOS
+return, max drawdown < 10% on a single development split); or performs
+no better than - or worse than - V1's already-rejected baseline; or the
+trend filter leaves too few trades to read at all (a real risk, since it
+will likely roughly halve V1's already-modest 161-trade sample).
+
+**Status**: built and tested (59/59 project tests passing, 7 new).
+**Not yet run.** `risk_management.py`, `backtest_engine.py`,
+`instruments.py`, the GBP-account currency-conversion logic, and the
+entire `live/` connector remain untouched. Validation and final-reserved
+data have not been accessed.
+
 ## The strategy
 
 **Markets:** EUR/USD, GBP/USD, USD/JPY, Gold (XAU/USD). Adding another
@@ -909,6 +961,8 @@ results ever look unexpectedly off, check the run's output for a
 | `dataset_split.py` | Three-way chronological DEVELOPMENT/VALIDATION/FINAL RESERVED split for the London Liquidity Sweep work - see "London Liquidity Sweep Reversal V1" above. Separate from `run_backtest.py`'s own two-way split, which is unchanged |
 | `signals_london_sweep_m15.py` | London Liquidity Sweep Reversal V1 - M15, Europe/London session-anchored, structural stop/target. **Rejected after development testing** - see "London Liquidity Sweep Reversal V1" above. Not deleted - kept as a complete, honestly-labeled failed experiment |
 | `run_london_sweep_backtest.py` | Entry point for V1 - EUR_USD/GBP_USD only, `dataset_split.split_for_iteration()` exclusively |
+| `signals_london_sweep_trend_aligned_m15.py` | V2 - imports V1's sweep+confirmation logic unchanged, adds a daily EMA50/200 trend-alignment gate. See "London Liquidity Sweep Reversal V2" above. Built, not yet run |
+| `run_london_sweep_trend_aligned_backtest.py` | Entry point for V2 - same scope as V1's entry point, plus daily candle data for the trend gate |
 | `results/` | Permanently preserved raw results from concluded experiments (currently: V1 round 1's full trade-level data + structured summary), so an experiment never needs re-running just to recall what happened |
 | `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports M5/M15/H1/H4/D granularities |
 | `indicators.py` | EMA, ATR, rolling high/low channel, SMA, rolling std, RSI |
