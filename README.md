@@ -168,6 +168,56 @@ What was considered and explicitly NOT pursued, with reasons:
   (AUD_USD) failed more clearly than the existing basket, weak evidence
   against this being fruitful.
 
+## Next: London Liquidity Sweep Reversal (data split approved, strategy not yet built)
+
+A genuinely different, structural idea, not a variant of anything in
+the concluded search above - not yet built. Before writing any strategy
+code, this project's existing infrastructure was audited (which parts
+are strategy-agnostic and safe to reuse vs. which parts belong to the
+concluded, failed strategies and must not be), and a stricter data
+discipline was put in place first: a three-way chronological split
+(`dataset_split.py`), not the two-way train/test split used for every
+strategy tried so far.
+
+M15 candle data for EUR_USD/GBP_USD was fetched and its actual
+availability confirmed directly (2020-08-24 to 2026-08-21 - eleven days
+later at the start than the H1/H4/D series). A sample-sufficiency check
+- one fixed, generic, deliberately non-tuned Asian-range-sweep pattern,
+counted only on dates before the reserved period, never evaluated for
+performance - found ample raw candidate density in both non-reserved
+windows (~750-765 distinct days/instrument with a qualifying event in
+development, ~175-190 in validation), supporting these as workable
+window sizes before any real strategy exists yet to confirm it directly.
+
+```
+DEVELOPMENT:    2020-08-24 -> 2024-07-15   (~1,421 days, ~65%)
+VALIDATION:     2024-07-15 -> 2025-07-15   (~365 days, ~17%)
+FINAL RESERVED: 2025-07-15 -> 2026-08-21   (~402 days, ~18%)  - LOCKED
+```
+
+`dataset_split.py`'s `split_for_iteration()` is the only function
+strategy-development scripts should import - it returns development and
+validation only; the final reserved period isn't reachable through it
+at all. Getting the reserved period at all requires calling
+`get_final_reserved_period()` with an explicit,
+spelled-out confirmation flag, which prints a loud banner every time
+it's used - by construction, not just by convention, so leaking that
+period into ongoing iteration takes a deliberate, visible act, not a
+copy-pasted date range. See that module's docstring for the full
+reasoning, and `tests/test_dataset_split.py` for tests locking in that
+the guard rail actually works, not just documenting an intention.
+
+Also fixed while wiring this up: `data_fetch.py`'s synthetic-data
+fallback path only recognized H1/H4/D granularities (`KeyError` on
+M15/M5, though the REAL fetch path already handled any granularity
+generically) - extended additively, no existing caller's behavior
+changed.
+
+Nothing else changed - `risk_management.py`, `backtest_engine.py`,
+`instruments.py`, the GBP-account currency-conversion logic, and the
+entire `live/` connector are untouched. No strategy signal logic has
+been written yet.
+
 ## The strategy
 
 **Markets:** EUR/USD, GBP/USD, USD/JPY, Gold (XAU/USD). Adding another
@@ -767,6 +817,7 @@ results ever look unexpectedly off, check the run's output for a
 | File | Purpose |
 |---|---|
 | `instruments.py` | Per-instrument specs (now including `AUD_USD`, added for a standalone check - see "Tuning history" item 25), pip/notional value math (incl. cross-currency), correlation group, spread cap, swap rates; `PORTFOLIO_SYMBOLS` is the explicit 4-instrument list every multi-instrument script actually trades, kept separate from the full registry |
+| `dataset_split.py` | Three-way chronological DEVELOPMENT/VALIDATION/FINAL RESERVED split for the London Liquidity Sweep work - see "Next: London Liquidity Sweep Reversal" above. Separate from `run_backtest.py`'s own two-way split, which is unchanged |
 | `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports H1/H4/D granularities |
 | `indicators.py` | EMA, ATR, rolling high/low channel, SMA, rolling std, RSI |
 | `signals.py` | Original 4H-trend/1H-entry trend-following strategy (merges the 4H trend filter onto the 1H timeline, no lookahead); `SignalConfig` holds all tunable entry-logic parameters |
