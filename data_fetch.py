@@ -203,11 +203,12 @@ def generate_synthetic_data(oanda_symbol, granularity, periods, start_price, see
     """
     rng = np.random.default_rng(seed)
 
-    # Rough per-candle volatility scaled by timeframe (4H moves ~2x a 1H
-    # candle, daily ~4x - not exactly sqrt(n) since real markets aren't a
-    # pure random walk, but close enough for a smoke-test fallback).
+    # Rough per-candle volatility scaled by timeframe, approximately by
+    # sqrt(time) relative to a 1H candle (4H ~2x, daily ~4x, 15m ~0.5x,
+    # 5m ~0.29x) - not exact since real markets aren't a pure random
+    # walk, but close enough for a smoke-test fallback.
     base_hourly_vol = 0.0006 if start_price < 100 else 0.0004  # forex vs gold/JPY-scale prices
-    vol_scale = {"H4": 2.0, "D": 4.0}.get(granularity, 1.0)
+    vol_scale = {"M5": 0.29, "M15": 0.5, "H4": 2.0, "D": 4.0}.get(granularity, 1.0)
     vol = base_hourly_vol * vol_scale
 
     returns = rng.normal(loc=0.0, scale=vol, size=periods)
@@ -223,7 +224,7 @@ def generate_synthetic_data(oanda_symbol, granularity, periods, start_price, see
     spec = next(s for s in INSTRUMENTS.values() if s.oanda_symbol == oanda_symbol)
     half_spread = spec.pip_size * 0.75
 
-    freq = {"H4": "4h", "D": "1D"}.get(granularity, "h")
+    freq = {"M5": "5min", "M15": "15min", "H4": "4h", "D": "1D"}.get(granularity, "h")
     index = pd.date_range(end=pd.Timestamp.now().floor("h"), periods=periods, freq=freq)
 
     df = pd.DataFrame({
@@ -270,6 +271,7 @@ def fetch_all(instrument_symbols, granularities=("H1", "H4")):
         print("Falling back to SYNTHETIC sample data for ALL instruments (NOT real prices).")
         synthetic = {}
         periods_by_granularity = {
+            "M5": 365 * YEARS_OF_HISTORY * 192, "M15": 365 * YEARS_OF_HISTORY * 64,
             "H1": 365 * YEARS_OF_HISTORY * 16, "H4": 365 * YEARS_OF_HISTORY * 4,
             "D": 365 * YEARS_OF_HISTORY,
         }
