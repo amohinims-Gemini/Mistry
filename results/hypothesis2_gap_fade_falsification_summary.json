@@ -1,0 +1,70 @@
+{
+  "hypothesis": "V3 Candidate Hypothesis 2: Weekend Gap Fade",
+  "development_window": "2020-08-24 to 2024-07-15 (dataset_split.DEVELOPMENT_START/END)",
+  "round_1_fixed_24h_hold_fade": {
+    "description": "Fixed-hold fade trade: gap = Sunday reopen Open vs Friday Close (>40h timestamp gap, Friday pre-bar); fade direction = -sign(gap), unconditional; hold exactly 24h from reopen; all 4 instruments (EUR_USD, GBP_USD, USD_JPY, XAU_USD), H1.",
+    "sample_size": {"pooled": 795, "per_instrument": {"EUR_USD": 200, "GBP_USD": 200, "USD_JPY": 200, "XAU_USD": 195}},
+    "primary_test": {
+      "pearson_r_gap_vs_subsequent_24h_return": -0.00512, "p_value": 0.8853,
+      "reversion_rate_pct": 50.64, "reversion_rate_p_vs_50pct": 0.7213,
+      "interpretation": "no detectable reversion signal - statistically indistinguishable from 50%/no correlation"
+    },
+    "per_instrument": {
+      "EUR_USD": {"n": 200, "r": -0.042, "p": 0.554, "reversion_pct": 43.65},
+      "GBP_USD": {"n": 200, "r": -0.038, "p": 0.598, "reversion_pct": 55.33},
+      "USD_JPY": {"n": 200, "r": 0.011, "p": 0.873, "reversion_pct": 55.05},
+      "XAU_USD": {"n": 195, "r": 0.026, "p": 0.717, "reversion_pct": 48.45}
+    },
+    "stability_by_year": {
+      "2020": {"n": 68, "r": -0.137, "p": 0.263},
+      "2021": {"n": 202, "r": -0.162, "p": 0.020},
+      "2022": {"n": 207, "r": -0.077, "p": 0.272},
+      "2023": {"n": 207, "r": 0.204, "p": 0.003},
+      "2024": {"n": 111, "r": 0.228, "p": 0.015},
+      "interpretation": "correlation sign flips from weakly negative (2020-2022) to significantly POSITIVE - the opposite direction - in 2023-2024; not a stable structural relationship"
+    },
+    "cost_adjusted_edge": {
+      "n_trades": 786,
+      "realistic_avg_return_pct_per_trade": -0.0438, "realistic_p_value": 0.0296,
+      "hypothetical_zero_cost_avg_return_pct_per_trade": -0.0136, "hypothetical_p_value": 0.4985,
+      "cumulative_realistic_pct_unsized": -34.41
+    }
+  },
+  "round_2_closure_tracking": {
+    "description": "Does the gap show a tendency to partially/fully close, and how fast? EUR_USD & GBP_USD only, H1. No minimum gap size. Closure fraction = 1-(Close(t)-Friday_Close)/(Reopen_Open-Friday_Close), tracked via bar Close, max 120h window. Compared against a pre-specified baseline: identical closure test applied to ordinary non-weekend H1 moves (every 20th bar, systematic subsample).",
+    "sample_size": {"combined": 400, "EUR_USD": 200, "GBP_USD": 200, "baseline_combined": 2292, "up_gaps": 195, "down_gaps": 205},
+    "gap_size_distribution_pips": {
+      "EUR_USD": {"mean_abs": 6.86, "median_abs": 4.08, "p25": 1.84, "p75": 7.90, "max": 55.30},
+      "GBP_USD": {"mean_abs": 10.39, "median_abs": 6.40, "p25": 2.35, "p75": 12.40, "max": 117.95}
+    },
+    "closure_rates_combined_vs_baseline": {
+      "25pct": {"real_gap_rate": 96.50, "baseline_rate": 94.55, "z": 1.72, "p": 0.0853},
+      "50pct": {"real_gap_rate": 95.25, "baseline_rate": 94.55, "z": 0.62, "p": 0.5354},
+      "100pct": {"real_gap_rate": 92.00, "baseline_rate": 94.37, "z": -2.06, "p": 0.0396}
+    },
+    "interpretation_closure_rates": "Closure rates are very high (92-97%) but statistically indistinguishable from the ordinary-move baseline at 25% and 50%, and significantly LOWER than baseline at 100% closure - real weekend gaps do not close more reliably than an arbitrary ordinary hourly move given the same 5-day window. High closure is a generic feature of price wandering relative to a small recent reference distance, not a weekend-specific mechanism.",
+    "time_to_closure": {"median_hours_25pct": 0, "median_hours_50pct": 1, "median_hours_100pct": 2, "mean_hours_range": "3.4-8.4",
+      "interpretation": "closure typically happens within the first 1-2 hours after reopen - too fast to represent a tradeable multi-day drift-back opportunity, more consistent with same-session settling"},
+    "up_vs_down_gaps": "no meaningful asymmetry - similar closure rates and negative realistic P&L in both directions",
+    "cost_adjusted_edge_combined": {
+      "25pct": {"realistic_pct_per_trade": -0.0557, "realistic_p": 0.0002, "hypothetical_pct_per_trade": 0.0185, "hypothetical_p": 0.2163},
+      "50pct": {"realistic_pct_per_trade": -0.0504, "realistic_p": 0.0042, "hypothetical_pct_per_trade": 0.0196, "hypothetical_p": 0.2640},
+      "100pct": {"realistic_pct_per_trade": -0.0383, "realistic_p": 0.0690, "hypothetical_pct_per_trade": 0.0264, "hypothetical_p": 0.2066},
+      "interpretation": "raw (cost-free) edge is small and not statistically significant at any threshold; realistic spread cost (~0.065-0.074%/trade) is 3-4x the size of that already-insignificant raw edge and flips every threshold decisively negative"
+    },
+    "stability_by_year_50pct_threshold": {
+      "2020": {"n": 34, "closure_rate_pct": 91.18, "realistic_pnl_pct": -0.1083, "p": 0.3635},
+      "2021": {"n": 102, "closure_rate_pct": 94.12, "realistic_pnl_pct": -0.0566, "p": 0.0076},
+      "2022": {"n": 104, "closure_rate_pct": 94.23, "realistic_pnl_pct": -0.0598, "p": 0.1890},
+      "2023": {"n": 103, "closure_rate_pct": 98.06, "realistic_pnl_pct": -0.0300, "p": 0.1701},
+      "2024": {"n": 57, "closure_rate_pct": 96.49, "realistic_pnl_pct": -0.0241, "p": 0.2326},
+      "interpretation": "closure rate is stably high every year, but so is the baseline - stability of a non-effect, not of a genuine edge"
+    }
+  },
+  "verdict": "REJECTED. Round 1 (fixed 24h-hold fade) found no detectable reversion signal (r=-0.005, p=0.885; reversion rate 50.64%, statistically indistinguishable from 50%) and an unstable, sign-flipping year-by-year correlation. Round 2 (closure-tracking, the more rigorous test) found that real weekend gaps DO close at a high rate (92-97%) but at a rate statistically indistinguishable from - and at full closure, significantly lower than - an ordinary non-weekend-move baseline over the same 5-day window, meaning high closure is a generic feature of price wandering, not evidence of a weekend-specific mechanism. Closure also happens too fast (median 0-2h) to represent a tradeable multi-day opportunity. The raw cost-free edge was not statistically significant at any closure threshold in either round, and realistic transaction costs turn every measured edge decisively negative.",
+  "does_not_proceed_to": "V3 build - hypothesis rejected at the cheap-falsification stage, before any strategy/entry-exit code was written.",
+  "scripts": [
+    "hypothesis_tests/gap_fade_falsification_round1_24h_hold.py",
+    "hypothesis_tests/gap_fade_falsification_round2_closure.py"
+  ]
+}

@@ -449,6 +449,50 @@ repeating).
 **Does not proceed to V3.** Rejected at the cheap-falsification stage,
 before any strategy code was written.
 
+### Hypothesis 2: Weekend Gap Fade - REJECTED
+
+Mechanism under test: FX closes for ~48h over the weekend; news
+accumulating during that closure gets discovered all at once at Sunday
+reopen, in a thin market prone to overshoot - a partial reversion
+("fade") of that gap during the following, more liquid session would be
+a distinct, liquidity-driven edge (not a continuous-trading statistical
+extreme like the already-rejected mean-reversion family).
+
+**Round 1** (fixed 24h-hold fade trade, all 4 instruments, H1, n=795
+pooled): correlation between gap size and subsequent 24h return was
+essentially zero (r=-0.005, p=0.885) and the reversion rate (50.64%)
+was statistically indistinguishable from the 50% no-signal baseline
+(p=0.721). The correlation's sign also flipped from weakly negative
+(2020-2022) to significantly *positive* - continuation, the opposite of
+the hypothesis - in 2023-2024.
+
+**Round 2** (closure-tracking, the more rigorous test, EUR_USD/GBP_USD
+only, n=400): does the gap tend to partially/fully close, and how fast?
+Gaps *do* close at a high rate (92-97% reach 25/50/100% closure within
+5 days) - but a **pre-registered baseline** (the identical test applied
+to ordinary, non-weekend H1 moves) closes at a statistically
+indistinguishable rate, and at full closure, the ordinary-move baseline
+actually closes *more* often (94.4% vs 92.0%, p=0.040). High closure is
+a generic feature of price wandering over a 5-day window relative to
+any small recent price level - not something specific to weekends.
+Closure also happens fast (median 0-2 hours after reopen), too fast to
+represent a real multi-day drift-back trade. The raw, cost-free edge
+was not statistically significant at any closure threshold
+(p=0.21-0.26), and realistic Bid/Ask spread cost (~0.07%/trade, 3-4x
+the size of the already-insignificant raw edge) turned every threshold
+decisively negative (p=0.0002-0.069).
+
+Full pre-registered specs, all numbers from both rounds, and the
+verdict: `results/hypothesis2_gap_fade_falsification_summary.json`.
+Re-runnable, unmodified scripts preserved at
+`hypothesis_tests/gap_fade_falsification_round1_24h_hold.py` and
+`hypothesis_tests/gap_fade_falsification_round2_closure.py` (neither
+imported by anything - kept purely so this exact test never needs
+repeating).
+
+**Does not proceed to V3.** Rejected at the cheap-falsification stage,
+before any strategy code was written.
+
 ## The strategy
 
 **Markets:** EUR/USD, GBP/USD, USD/JPY, Gold (XAU/USD). Adding another
@@ -1053,7 +1097,7 @@ results ever look unexpectedly off, check the run's output for a
 | `run_london_sweep_backtest.py` | Entry point for V1 - EUR_USD/GBP_USD only, `dataset_split.split_for_iteration()` exclusively |
 | `signals_london_sweep_trend_aligned_m15.py` | V2 - imports V1's sweep+confirmation logic unchanged, adds a daily EMA50/200 trend-alignment gate. **Rejected after development testing** - see "London Liquidity Sweep Reversal V2" above |
 | `run_london_sweep_trend_aligned_backtest.py` | Entry point for V2 - same scope as V1's entry point, plus daily candle data for the trend gate |
-| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for V3 candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. See "V3 candidate search" above |
+| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for V3 candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. Currently: `leadlag_falsification.py` (Hypothesis 1, rejected), `gap_fade_falsification_round1_24h_hold.py` + `gap_fade_falsification_round2_closure.py` (Hypothesis 2, rejected). See "V3 candidate search" above |
 | `results/` | Permanently preserved raw results from concluded experiments (V1/V2 full trade-level data + structured summaries, V3 candidate falsification summaries), so an experiment never needs re-running just to recall what happened |
 | `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports M5/M15/H1/H4/D granularities |
 | `indicators.py` | EMA, ATR, rolling high/low channel, SMA, rolling std, RSI |
