@@ -397,6 +397,58 @@ Not deleted, per the same decision as V1:
 `run_london_sweep_trend_aligned_backtest.py`, and their tests remain in
 the repository as a complete, honestly-labeled failed experiment.
 
+## V3 candidate search - cheap falsification before building anything
+
+With V1 and V2 both rejected, before writing any more strategy code
+three genuinely different structural hypotheses (not variations of
+trend-following, mean-reversion, momentum, or the liquidity-sweep
+family) were proposed for a possible V3, ranked, and screened with the
+*cheapest possible* empirical test each - pure statistics on
+DEVELOPMENT data only, one pre-registered specification per hypothesis,
+no thresholds swept or variants searched to manufacture significance -
+before any entry/exit code, risk-management change, or backtest engine
+involvement. This is deliberately cheaper and faster to reject on than
+building a full strategy (as V1/V2 both required) - the point is to
+stop paying that cost for hypotheses that don't survive five minutes of
+statistics.
+
+### Hypothesis 1: Cross-Instrument Lead-Lag (Relative Strength Rotation) - REJECTED
+
+Mechanism under test: EUR_USD and GBP_USD share substantial common USD-
+direction exposure; if EUR_USD (the more liquid pair) makes an unusually
+large move and GBP_USD hasn't yet moved a proportional amount, GBP_USD
+might be "catching up" - a statistical-arbitrage-style, cross-instrument
+mechanism, structurally different from any single-instrument price
+pattern already tried.
+
+Pre-registered test (M15, DEVELOPMENT only, n=96,813 bars): does
+EUR_USD's just-closed bar return predict GBP_USD's *next* bar return,
+one fixed 1-bar lag, unconditional on magnitude?
+
+**Result: the wrong sign.** r = -0.0095 (p=0.003) and directional
+accuracy 49.42% - significantly *below* the 50% no-signal baseline
+(p=0.0004), not above it. Critically, this negative, tiny effect is
+statistically indistinguishable from GBP_USD's own already-rejected
+lag-1 autocorrelation (r=-0.030) and from the reverse direction,
+GBP_USD leading EUR_USD (r=-0.0145) - the same pattern shows up
+regardless of which instrument "leads," which is the signature of
+generic microstructure-level negative serial correlation (bid-ask
+bounce), not a real cross-instrument information-flow effect. The
+correlation's sign also flips between years (2021 is the only positive
+year of five). Realistic Bid/Ask P&L trading every bar toward the
+signal: -0.0175%/trade (t=-86.8) - decisively negative, and the
+zero-cost hypothetical version is also (weakly) negative, so there was
+no positive raw edge to begin with.
+
+Full pre-registered spec, all numbers, and the verdict:
+`results/hypothesis1_leadlag_falsification_summary.json`. Re-runnable,
+unmodified script preserved at `hypothesis_tests/leadlag_falsification.py`
+(not imported by anything, kept purely so this exact test never needs
+repeating).
+
+**Does not proceed to V3.** Rejected at the cheap-falsification stage,
+before any strategy code was written.
+
 ## The strategy
 
 **Markets:** EUR/USD, GBP/USD, USD/JPY, Gold (XAU/USD). Adding another
@@ -999,9 +1051,10 @@ results ever look unexpectedly off, check the run's output for a
 | `dataset_split.py` | Three-way chronological DEVELOPMENT/VALIDATION/FINAL RESERVED split for the London Liquidity Sweep work - see "London Liquidity Sweep Reversal V1" above. Separate from `run_backtest.py`'s own two-way split, which is unchanged |
 | `signals_london_sweep_m15.py` | London Liquidity Sweep Reversal V1 - M15, Europe/London session-anchored, structural stop/target. **Rejected after development testing** - see "London Liquidity Sweep Reversal V1" above. Not deleted - kept as a complete, honestly-labeled failed experiment |
 | `run_london_sweep_backtest.py` | Entry point for V1 - EUR_USD/GBP_USD only, `dataset_split.split_for_iteration()` exclusively |
-| `signals_london_sweep_trend_aligned_m15.py` | V2 - imports V1's sweep+confirmation logic unchanged, adds a daily EMA50/200 trend-alignment gate. See "London Liquidity Sweep Reversal V2" above. Built, not yet run |
+| `signals_london_sweep_trend_aligned_m15.py` | V2 - imports V1's sweep+confirmation logic unchanged, adds a daily EMA50/200 trend-alignment gate. **Rejected after development testing** - see "London Liquidity Sweep Reversal V2" above |
 | `run_london_sweep_trend_aligned_backtest.py` | Entry point for V2 - same scope as V1's entry point, plus daily candle data for the trend gate |
-| `results/` | Permanently preserved raw results from concluded experiments (currently: V1 round 1's full trade-level data + structured summary), so an experiment never needs re-running just to recall what happened |
+| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for V3 candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. See "V3 candidate search" above |
+| `results/` | Permanently preserved raw results from concluded experiments (V1/V2 full trade-level data + structured summaries, V3 candidate falsification summaries), so an experiment never needs re-running just to recall what happened |
 | `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports M5/M15/H1/H4/D granularities |
 | `indicators.py` | EMA, ATR, rolling high/low channel, SMA, rolling std, RSI |
 | `signals.py` | Original 4H-trend/1H-entry trend-following strategy (merges the 4H trend filter onto the 1H timeline, no lookahead); `SignalConfig` holds all tunable entry-logic parameters |
