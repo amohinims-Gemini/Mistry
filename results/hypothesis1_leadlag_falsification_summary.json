@@ -1,0 +1,55 @@
+{
+  "hypothesis": "V3 Candidate Hypothesis 1: Cross-Instrument Lead-Lag (Relative Strength Rotation)",
+  "pre_registered_specification": {
+    "instruments": "EUR_USD (leader, chosen on liquidity grounds before testing), GBP_USD (lagger)",
+    "timeframe": "M15",
+    "lag": "exactly 1 bar (15 minutes) ahead, fixed - not swept",
+    "leader_move": "ret_EUR[T] = log(Close_EUR[T]) - log(Close_EUR[T-1])",
+    "target": "ret_GBP[T+1] = log(Close_GBP[T+1]) - log(Close_GBP[T])",
+    "threshold": "none - unconditional on magnitude, sign-based decision every bar",
+    "no_lookahead": "ret_EUR[T] fully known at decision time T (bar T closed); ret_GBP[T+1] strictly in the future at T",
+    "development_window": "2020-08-24 to 2024-07-15 (dataset_split.DEVELOPMENT_START/END)"
+  },
+  "sample_size": {"n": 96813, "note": "far above the project's 150-trade minimum-sample convention"},
+  "primary_test_EUR_leads_GBP": {
+    "pearson_r": -0.00950,
+    "t_stat": -2.956,
+    "p_value": 0.0031,
+    "directional_accuracy_pct": 49.42,
+    "directional_accuracy_n": "46329/93748",
+    "directional_accuracy_p_vs_50pct": 0.0004,
+    "interpretation": "negative correlation and sub-50% directional accuracy - the OPPOSITE sign from the hypothesis, which predicted GBP catching up in EUR's direction"
+  },
+  "baseline_A_GBP_own_autocorrelation": {
+    "description": "GBP_USD's own lag-1 return predicting its own next return - the already-rejected single-instrument momentum mechanism",
+    "pearson_r": -0.0300, "p_value": 0.0000, "directional_accuracy_pct": 48.36
+  },
+  "baseline_B_reverse_direction": {
+    "description": "symmetric check: GBP_USD[T] predicting EUR_USD[T+1]",
+    "pearson_r": -0.01452, "p_value": 0.0000, "directional_accuracy_pct": 49.30
+  },
+  "cross_baseline_comparison": "Primary test (r=-0.0095), baseline A (r=-0.0300) and baseline B (r=-0.0145) are all negative and similar in magnitude regardless of which instrument 'leads' - consistent with generic microstructure-level negative serial correlation (bid-ask bounce), not a genuine cross-instrument information-flow/catch-up effect specific to EUR->GBP.",
+  "stability_by_year": {
+    "2020": {"n": 8842, "r": -0.019, "p": 0.075, "dir_acc_pct": 48.69},
+    "2021": {"n": 24934, "r": 0.012, "p": 0.063, "dir_acc_pct": 50.19},
+    "2022": {"n": 24835, "r": -0.010, "p": 0.118, "dir_acc_pct": 48.44},
+    "2023": {"n": 24858, "r": -0.017, "p": 0.008, "dir_acc_pct": 49.70},
+    "2024": {"n": 13344, "r": -0.014, "p": 0.109, "dir_acc_pct": 49.77},
+    "interpretation": "sign flips between years (2021 only positive year); no stable, consistently-signed relationship"
+  },
+  "cost_adjusted_edge": {
+    "n_trades": 95072,
+    "realistic_bid_ask_avg_return_pct_per_trade": -0.01752,
+    "realistic_t_stat": -86.771,
+    "realistic_p_value": 0.0000,
+    "hypothetical_zero_cost_avg_return_pct_per_trade": -0.00042,
+    "hypothetical_t_stat": -2.124,
+    "hypothetical_p_value": 0.0337,
+    "cost_drag_pct_per_trade": 0.01710,
+    "average_gbp_usd_spread_pips": 2.19,
+    "interpretation": "raw signal is already slightly negative before any cost; realistic spread cost at 15-minute trade frequency overwhelms any conceivable edge"
+  },
+  "verdict": "REJECTED. Three independent lines of evidence converge: (1) correlation is the wrong sign for the hypothesis and directional accuracy is significantly below 50%, not above it; (2) the effect is statistically indistinguishable in shape/magnitude from generic single-instrument microstructure autocorrelation (both baselines), suggesting no genuine leader-to-lagger information-flow mechanism specific to this pair; (3) even ignoring transaction costs, the raw signal produces slightly negative expected returns, and realistic spread cost makes it decisively negative. This was a single, pre-committed test per the project's no-variant-search discipline - it does not rule out every possible lag/instrument combination, but it failed cleanly rather than ambiguously.",
+  "does_not_proceed_to": "V3 build - hypothesis rejected at the cheap-falsification stage, before any strategy/entry-exit code was written.",
+  "script": "hypothesis_tests/leadlag_falsification.py"
+}

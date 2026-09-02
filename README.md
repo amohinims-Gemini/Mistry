@@ -397,6 +397,153 @@ Not deleted, per the same decision as V1:
 `run_london_sweep_trend_aligned_backtest.py`, and their tests remain in
 the repository as a complete, honestly-labeled failed experiment.
 
+## V3 candidate search - cheap falsification before building anything
+
+With V1 and V2 both rejected, before writing any more strategy code
+three genuinely different structural hypotheses (not variations of
+trend-following, mean-reversion, momentum, or the liquidity-sweep
+family) were proposed for a possible V3, ranked, and screened with the
+*cheapest possible* empirical test each - pure statistics on
+DEVELOPMENT data only, one pre-registered specification per hypothesis,
+no thresholds swept or variants searched to manufacture significance -
+before any entry/exit code, risk-management change, or backtest engine
+involvement. This is deliberately cheaper and faster to reject on than
+building a full strategy (as V1/V2 both required) - the point is to
+stop paying that cost for hypotheses that don't survive five minutes of
+statistics.
+
+### Hypothesis 1: Cross-Instrument Lead-Lag (Relative Strength Rotation) - REJECTED
+
+Mechanism under test: EUR_USD and GBP_USD share substantial common USD-
+direction exposure; if EUR_USD (the more liquid pair) makes an unusually
+large move and GBP_USD hasn't yet moved a proportional amount, GBP_USD
+might be "catching up" - a statistical-arbitrage-style, cross-instrument
+mechanism, structurally different from any single-instrument price
+pattern already tried.
+
+Pre-registered test (M15, DEVELOPMENT only, n=96,813 bars): does
+EUR_USD's just-closed bar return predict GBP_USD's *next* bar return,
+one fixed 1-bar lag, unconditional on magnitude?
+
+**Result: the wrong sign.** r = -0.0095 (p=0.003) and directional
+accuracy 49.42% - significantly *below* the 50% no-signal baseline
+(p=0.0004), not above it. Critically, this negative, tiny effect is
+statistically indistinguishable from GBP_USD's own already-rejected
+lag-1 autocorrelation (r=-0.030) and from the reverse direction,
+GBP_USD leading EUR_USD (r=-0.0145) - the same pattern shows up
+regardless of which instrument "leads," which is the signature of
+generic microstructure-level negative serial correlation (bid-ask
+bounce), not a real cross-instrument information-flow effect. The
+correlation's sign also flips between years (2021 is the only positive
+year of five). Realistic Bid/Ask P&L trading every bar toward the
+signal: -0.0175%/trade (t=-86.8) - decisively negative, and the
+zero-cost hypothetical version is also (weakly) negative, so there was
+no positive raw edge to begin with.
+
+Full pre-registered spec, all numbers, and the verdict:
+`results/hypothesis1_leadlag_falsification_summary.json`. Re-runnable,
+unmodified script preserved at `hypothesis_tests/leadlag_falsification.py`
+(not imported by anything, kept purely so this exact test never needs
+repeating).
+
+**Does not proceed to V3.** Rejected at the cheap-falsification stage,
+before any strategy code was written.
+
+### Hypothesis 2: Weekend Gap Fade - REJECTED
+
+Mechanism under test: FX closes for ~48h over the weekend; news
+accumulating during that closure gets discovered all at once at Sunday
+reopen, in a thin market prone to overshoot - a partial reversion
+("fade") of that gap during the following, more liquid session would be
+a distinct, liquidity-driven edge (not a continuous-trading statistical
+extreme like the already-rejected mean-reversion family).
+
+**Round 1** (fixed 24h-hold fade trade, all 4 instruments, H1, n=795
+pooled): correlation between gap size and subsequent 24h return was
+essentially zero (r=-0.005, p=0.885) and the reversion rate (50.64%)
+was statistically indistinguishable from the 50% no-signal baseline
+(p=0.721). The correlation's sign also flipped from weakly negative
+(2020-2022) to significantly *positive* - continuation, the opposite of
+the hypothesis - in 2023-2024.
+
+**Round 2** (closure-tracking, the more rigorous test, EUR_USD/GBP_USD
+only, n=400): does the gap tend to partially/fully close, and how fast?
+Gaps *do* close at a high rate (92-97% reach 25/50/100% closure within
+5 days) - but a **pre-registered baseline** (the identical test applied
+to ordinary, non-weekend H1 moves) closes at a statistically
+indistinguishable rate, and at full closure, the ordinary-move baseline
+actually closes *more* often (94.4% vs 92.0%, p=0.040). High closure is
+a generic feature of price wandering over a 5-day window relative to
+any small recent price level - not something specific to weekends.
+Closure also happens fast (median 0-2 hours after reopen), too fast to
+represent a real multi-day drift-back trade. The raw, cost-free edge
+was not statistically significant at any closure threshold
+(p=0.21-0.26), and realistic Bid/Ask spread cost (~0.07%/trade, 3-4x
+the size of the already-insignificant raw edge) turned every threshold
+decisively negative (p=0.0002-0.069).
+
+Full pre-registered specs, all numbers from both rounds, and the
+verdict: `results/hypothesis2_gap_fade_falsification_summary.json`.
+Re-runnable, unmodified scripts preserved at
+`hypothesis_tests/gap_fade_falsification_round1_24h_hold.py` and
+`hypothesis_tests/gap_fade_falsification_round2_closure.py` (neither
+imported by anything - kept purely so this exact test never needs
+repeating).
+
+**Does not proceed to V3.** Rejected at the cheap-falsification stage,
+before any strategy code was written.
+
+### Hypothesis 3: Month-End Flow Bias - REJECTED
+
+Mechanism under test: institutional portfolio rebalancing (pension
+funds, currency-hedged mandates, corporate treasury flows) is
+documented to concentrate around month-end, creating a mechanically-
+driven - not "views"-driven - directional flow. Research question:
+does the final trading day / final trading hours of each month show a
+repeatable directional OR volatility bias, materially different from
+ordinary days? (Ranked weakest of the three V3 candidates from the
+start, on both direction-sourcing and trade-count grounds.)
+
+EUR_USD/GBP_USD, H1, n=96 combined month-end days (48/instrument,
+already below the 150-event convention, acknowledged before testing).
+Both close-to-close and intraday returns, plus a final-4-hours window,
+were tested against an ordinary-day control, alongside realized
+volatility.
+
+**No significant directional edge anywhere.** Pooled close-to-close
+mean -0.052% (p=0.21), intraday -0.050% (p=0.22) - neither significant,
+and no hit rate anywhere (40-46%) is statistically distinguishable from
+50%. Direction is negative in 4 of 5 years but flips positive in 2022,
+undermining the "consistent sign" requirement set before testing.
+Cost-adjusted P&L, using the one direction implied by the pooled
+sample's own sign (decided once, not cherry-picked): +0.026%/trade
+combined, **not significant (p=0.52)** - and GBP_USD alone would have
+lost money trading it.
+
+**One genuine, separate finding**: realized volatility in the final 4
+hours of the month is ~23% higher than ordinary days (p=0.012,
+nominally significant) - consistent with well-documented real month-end
+fixing-window activity. Per the pre-registered protocol this is
+necessary but not sufficient to validate a *directional* flow bias -
+it's a volatility fact, not a tradeable edge as this hypothesis was
+framed, and per this project's standing discipline against acting on a
+pattern spotted mid-analysis without independent advance justification,
+it was not treated as grounds to loosen the verdict. Left as a possible
+seed for a genuinely different future idea (volatility-timing), not
+pursued here.
+
+Full pre-registered protocol, all numbers, and the verdict:
+`results/hypothesis3_monthend_falsification_summary.json`. Re-runnable,
+unmodified script preserved at `hypothesis_tests/monthend_falsification.py`
+(not imported by anything, kept purely so this exact test never needs
+repeating).
+
+**Does not proceed to V3.** Rejected at the cheap-falsification stage,
+before any strategy code was written. **All three original V3
+candidates (Cross-Instrument Lead-Lag, Weekend Gap Fade, Month-End Flow
+Bias) are now rejected** - no further V3 hypothesis is currently under
+investigation; next steps have not yet been decided.
+
 ## The strategy
 
 **Markets:** EUR/USD, GBP/USD, USD/JPY, Gold (XAU/USD). Adding another
@@ -999,9 +1146,10 @@ results ever look unexpectedly off, check the run's output for a
 | `dataset_split.py` | Three-way chronological DEVELOPMENT/VALIDATION/FINAL RESERVED split for the London Liquidity Sweep work - see "London Liquidity Sweep Reversal V1" above. Separate from `run_backtest.py`'s own two-way split, which is unchanged |
 | `signals_london_sweep_m15.py` | London Liquidity Sweep Reversal V1 - M15, Europe/London session-anchored, structural stop/target. **Rejected after development testing** - see "London Liquidity Sweep Reversal V1" above. Not deleted - kept as a complete, honestly-labeled failed experiment |
 | `run_london_sweep_backtest.py` | Entry point for V1 - EUR_USD/GBP_USD only, `dataset_split.split_for_iteration()` exclusively |
-| `signals_london_sweep_trend_aligned_m15.py` | V2 - imports V1's sweep+confirmation logic unchanged, adds a daily EMA50/200 trend-alignment gate. See "London Liquidity Sweep Reversal V2" above. Built, not yet run |
+| `signals_london_sweep_trend_aligned_m15.py` | V2 - imports V1's sweep+confirmation logic unchanged, adds a daily EMA50/200 trend-alignment gate. **Rejected after development testing** - see "London Liquidity Sweep Reversal V2" above |
 | `run_london_sweep_trend_aligned_backtest.py` | Entry point for V2 - same scope as V1's entry point, plus daily candle data for the trend gate |
-| `results/` | Permanently preserved raw results from concluded experiments (currently: V1 round 1's full trade-level data + structured summary), so an experiment never needs re-running just to recall what happened |
+| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for V3 candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. Currently: `leadlag_falsification.py` (Hypothesis 1, rejected), `gap_fade_falsification_round1_24h_hold.py` + `gap_fade_falsification_round2_closure.py` (Hypothesis 2, rejected), `monthend_falsification.py` (Hypothesis 3, rejected). See "V3 candidate search" above |
+| `results/` | Permanently preserved raw results from concluded experiments (V1/V2 full trade-level data + structured summaries, V3 candidate falsification summaries), so an experiment never needs re-running just to recall what happened |
 | `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports M5/M15/H1/H4/D granularities |
 | `indicators.py` | EMA, ATR, rolling high/low channel, SMA, rolling std, RSI |
 | `signals.py` | Original 4H-trend/1H-entry trend-following strategy (merges the 4H trend filter onto the 1H timeline, no lookahead); `SignalConfig` holds all tunable entry-logic parameters |
