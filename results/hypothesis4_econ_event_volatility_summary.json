@@ -79,13 +79,52 @@
     "sign_or_significance_inconsistent_across_years_or_instruments": "TRIGGERED under the conservative scenario - 2020-2022 lean negative, 2023-2024 positive; FOMC and NFP flip negative individually",
     "trigger_sample_too_small": "NOT the binding constraint - 179 non-forced trades, above the 150 convention"
   },
-  "verdict": "REJECTED - but not a clean rejection, and explicitly NOT the same finding as Hypotheses 1-3. The underlying market phenomenon (large, robust, highly significant volatility expansion around FOMC/NFP/CPI releases) is real and is the strongest raw finding across the entire 14-prior-hypothesis search. What could not be established is tradeability: the entire apparent edge is attributable to assuming near-costless execution during the single riskiest, least-measurable 15-minute window in the dataset (96% of triggers land there), and a defensible, non-cherry-picked realistic-cost adjustment erases it and destabilizes it across years and event types. The spread-resolution check independently confirmed, directly and empirically, that M15-resolution cached OHLC/Bid-Ask data cannot see the true execution cost at the instant of a news-driven break (Open-based spread shows no widening at all, ratio ~1.0-1.02, while the bar's own realized range is 10-15x larger - a genuine spike lasting seconds is averaged away between 15-minute checkpoints). The honest conclusion is that this project's available data resolution is insufficient to determine whether this hypothesis is tradeable, not that no edge exists. Resolving it would require tick- or second-level bid/ask data, which is outside this project's OANDA M5/M15/H1/H4/D granularities.",
-  "does_not_proceed_to": "V4 strategy build - not because the phenomenon was disproven, but because this project's current data cannot resolve the central question (execution cost at the moment of the break) with confidence.",
-  "note_for_future_work": "If tick- or second-level bid/ask data becomes available for this project, this is the single most promising unresolved lead from the entire search - the volatility-expansion finding itself was never in doubt, only tradeability.",
+  "round_1_2_verdict_superseded_by_round_3": "REJECTED, but not cleanly - the market phenomenon (large, robust volatility expansion) was confirmed real, but tradeability could not be determined because M15-resolution data was shown unable to measure true execution cost at the moment of a break. Resolving this required finer data - see round_3 below, which now supersedes this as the final, decisive answer.",
+  "round_3_s5_finest_resolution_breakout_trigger": {
+    "description": "Reruns round 2's exact fixed design (0.1xATR entry buffer, structural stop opposite range side same buffer style, 1:1 R:R target, 24h max hold, dual-sided OCO, no-hindsight walk-forward - nothing changed or tuned) but now driven by S5 (5-second) candles - confirmed empirically the finest granularity OANDA's API offers, available back to the start of DEVELOPMENT for both EUR_USD and GBP_USD via the same existing read-only connection. Fetched as ~310 targeted event windows (not a bulk continuous download). Entry fill = realistic Ask_High(long)/Bid_Low(short) of the triggering S5 bar, worsened by SLIPPAGE_ATR_FRACTION=0.02xATR reused verbatim from backtest_engine.py. Stop/target monitored via S5 through the 2h post-event window, falling back to existing cached M15 data from 2h to the 24h max hold. Standalone simulation, backtest_engine.py/risk_management.py/live connector all untouched.",
+    "data_resolution_determination": "S5 (5-second) confirmed the minimum/finest resolution needed and available - directly resolves round 2's open question. Verified empirically (not assumed) for both instruments across the full DEVELOPMENT window before use.",
+    "chronological_split": "dataset_split.py's existing three-way split reused unchanged: DEVELOPMENT = train (125 events, walk-forward by year), VALIDATION = genuine out-of-sample checked exactly once (31 new events for 2024-07-15 to 2025-07-15, hand-curated from the same official Fed/BLS sources). FINAL_RESERVED NOT accessed.",
+    "ambiguous_same_bar_rate": "Dropped from 26.4% (M15, round 2) to 5.2% (13/250, S5, round 3) - confirms finer resolution resolves almost all of round 2's entry ambiguity.",
+    "trigger_lag": "Median 0 seconds, mean 108.5 seconds (right-skewed) - most triggers fire on the very first S5 tick after the event.",
+    "results": {
+      "development_train": {"n": 221, "win_rate_pct": 39.4, "expectancy_mean_r": -0.213, "p_value": 0.0012, "profit_factor": 0.649, "max_drawdown_r": 53.00, "gross_win_r": 87.00, "gross_loss_r": 134.00},
+      "validation_oos_checked_once": {"n": 53, "win_rate_pct": 20.8, "expectancy_mean_r": -0.585, "p_value": 0.0000, "profit_factor": 0.262, "max_drawdown_r": 30.00, "gross_win_r": 11.00, "gross_loss_r": 42.00},
+      "validation_by_instrument": {
+        "EUR_USD": {"n": 26, "expectancy_mean_r": -0.462, "p_value": 0.0093, "profit_factor": 0.368},
+        "GBP_USD": {"n": 27, "expectancy_mean_r": -0.704, "p_value": 0.0000, "profit_factor": 0.174}
+      },
+      "validation_by_event_type": {
+        "CPI": {"n": 20, "expectancy_mean_r": -0.600, "p_value": 0.0011, "profit_factor": 0.250},
+        "FOMC": {"n": 16, "expectancy_mean_r": -0.500, "p_value": 0.0253, "profit_factor": 0.333},
+        "NFP": {"n": 17, "expectancy_mean_r": -0.647, "p_value": 0.0007, "profit_factor": 0.214}
+      },
+      "development_walk_forward_by_year": {
+        "2020": {"n": 20, "expectancy_mean_r": -0.500, "p_value": 0.0118},
+        "2021": {"n": 61, "expectancy_mean_r": -0.344, "p_value": 0.0045},
+        "2022": {"n": 59, "expectancy_mean_r": -0.220, "p_value": 0.0854},
+        "2023": {"n": 54, "expectancy_mean_r": -0.037, "p_value": 0.7873},
+        "2024": {"n": 27, "expectancy_mean_r": -0.037, "p_value": 0.8501}
+      },
+      "by_session_utc_hour": "Every UTC-hour bucket (12, 13, 18, 19 - the two fixed event-time clusters) is flat-to-negative in both DEVELOPMENT and VALIDATION; no session shows a real edge."
+    },
+    "interpretation": "Negative expectancy every year in DEVELOPMENT (trending toward breakeven late, but never positive) - and that improving trend did NOT continue into VALIDATION, which reversed sharply back to -0.585R, more unprofitable than DEVELOPMENT as a whole. Confirms round 2's core concern directly: the earlier 'optimistic' M15 result (+0.352R) was an artifact of underestimated execution cost. Real S5 bid/ask plus realistic slippage doesn't just erase the edge, it flips it solidly negative and keeps it negative out-of-sample.",
+    "pre_committed_rejection_rule_applied": "'If H4 does not remain profitable out-of-sample after costs, reject it.' VALIDATION expectancy is significantly negative (p<0.0001) - rule triggered, hypothesis rejected.",
+    "script": "hypothesis_tests/econ_event_volatility_round3_s5_simulation.py",
+    "fetch_script": "hypothesis_tests/econ_event_volatility_round3_s5_fetch.py",
+    "data": "hypothesis_tests/data/economic_events_validation.csv (VALIDATION event table, new); hypothesis_tests/data/s5_cache/ (raw S5 candle cache, NOT committed - regenerable via the fetch script, see .gitignore)"
+  },
+  "verdict": "REJECTED - decisively and cleanly, resolving the earlier data-resolution-limited finding into a confident answer. At the finest resolution OANDA's API offers (S5), with realistic bid/ask fills and slippage, the breakout-trigger strategy is unprofitable in DEVELOPMENT (expectancy -0.213R, p=0.0012, PF=0.649) and MORE unprofitable out-of-sample in VALIDATION (expectancy -0.585R, p<0.0001, PF=0.262) - consistent across both instruments individually, all three event types, and nearly every session bucket. The underlying volatility-expansion phenomenon (round 1) was never in doubt and remains a genuine market fact; what round 3 resolves is that it is NOT capturable as a tradeable edge once realistic execution is modeled at adequate resolution. Per the user's own pre-committed rule ('if H4 does not remain profitable out-of-sample after costs, reject it'), this hypothesis is rejected. Does not proceed to a demo-bot validation stage, since that step was explicitly conditional on survival.",
+  "does_not_proceed_to": "V4 strategy build or demo-bot validation stage - the phenomenon is real but not tradeable at any resolution this project has been able to test, including the finest OANDA offers.",
+  "note_for_future_work": "This lead is now closed, not merely paused - round 3 answered the question round 2 left open, with a confident, out-of-sample-confirmed rejection. No further work on this specific hypothesis is warranted absent a fundamentally different execution model (e.g. limit rather than stop-style entries) or a different market/instrument where spread dynamics differ materially.",
   "scripts": [
     "hypothesis_tests/econ_event_volatility_round1_statistical.py",
     "hypothesis_tests/econ_event_volatility_spread_resolution_check.py",
-    "hypothesis_tests/econ_event_volatility_round2_breakout_trigger.py"
+    "hypothesis_tests/econ_event_volatility_round2_breakout_trigger.py",
+    "hypothesis_tests/econ_event_volatility_round3_s5_fetch.py",
+    "hypothesis_tests/econ_event_volatility_round3_s5_simulation.py"
   ],
-  "data": "hypothesis_tests/data/economic_events_development.csv"
+  "data": [
+    "hypothesis_tests/data/economic_events_development.csv",
+    "hypothesis_tests/data/economic_events_validation.csv"
+  ]
 }

@@ -11,5 +11,13 @@ __pycache__/
 # (tens of MB across 4 instruments x 2 timeframes x years of 1H data).
 data_cache/
 
+# Cached S5 (5-second) event-window data for the Hypothesis 4 breakout-
+# trigger simulations - regenerable via
+# hypothesis_tests/econ_event_volatility_round3_s5_fetch.py, and large
+# (~60MB across ~310 targeted event windows). The hand-curated event
+# DATE tables themselves (economic_events_*.csv) are NOT regenerable
+# and ARE committed - only this raw re-fetchable candle cache is excluded.
+hypothesis_tests/data/s5_cache/
+
 # Runtime state/logs for the (incomplete) live trading connector - see live/
 live_data/
