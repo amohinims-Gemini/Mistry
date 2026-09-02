@@ -541,8 +541,96 @@ repeating).
 **Does not proceed to V3.** Rejected at the cheap-falsification stage,
 before any strategy code was written. **All three original V3
 candidates (Cross-Instrument Lead-Lag, Weekend Gap Fade, Month-End Flow
-Bias) are now rejected** - no further V3 hypothesis is currently under
-investigation; next steps have not yet been decided.
+Bias) are now rejected.** One further hypothesis, outside the original
+three, was investigated afterward - see "Hypothesis 4" below.
+
+## Hypothesis 4: Economic Calendar Event Volatility - REJECTED, but not cleanly
+
+Introduces a genuinely new data source (a scheduled macro-event
+calendar) alongside price data - the first hypothesis in this entire
+search (15 attempts now, across the original systematic search, V1/V2
+London Sweep, and Hypotheses 1-3) to condition on something other than
+OANDA's own OHLC/Bid-Ask series. Research question: does price action
+around scheduled high-impact US releases show a statistically
+meaningful, *tradeable* volatility expansion that persists after
+realistic costs, regardless of direction?
+
+**Data source**: not the project's own `econ_calendar.py` (explicitly a
+rough recurring-weekday-window heuristic, doesn't know specific event
+types or FOMC/ECB/BoE dates - unsuitable for this and left untouched).
+Instead, a hand-curated, 125-event table built from official read-only
+archives: federalreserve.gov's FOMC calendar (31 events, 2pm ET
+decisions) and bls.gov's year-by-year release schedules (47 NFP + 47
+CPI, both 8:30am ET) - `hypothesis_tests/data/economic_events_development.csv`,
+DEVELOPMENT window only.
+
+**Round 1 (pure statistics)**: realized volatility in the 2h after
+these releases is **2.67x** the ordinary-day control level, stable
+3.5-6.2x every year 2020-2024, present in all three event types
+(FOMC 8.0x, CPI 4.96x, NFP 4.75x) - by a wide margin the strongest raw
+statistical finding across the entire search. A cost-adjusted P&L using
+hindsight direction (+0.085%/trade, p<0.0001) hinted the magnitude
+clears realistic cost, but couldn't establish real-time tradeability.
+
+**Spread-resolution check**: directly tested whether M15-resolution
+cached data can even see the true cost at the instant of a release
+(all 125 events land exactly on M15 boundaries). The bar's own
+*Open*-based spread shows **no widening at all** (ratio 1.01-1.02 vs.
+normal quiet-market spread), while that same bar's realized range is
+**10-15x larger** (50-61 pips vs. 4-8 pips of "spread"). A genuine
+spike lasting seconds is averaged away between 15-minute checkpoints -
+**M15 data cannot reliably capture true execution cost at the moment
+of a news-driven break.**
+
+**Round 2 (genuine non-lookahead breakout-trigger simulation)**: a
+standalone, mechanical, dual-sided OCO trigger (0.1xATR entry buffer,
+structural stop at the opposite range side, 1:1 R:R target - same
+buffer style and R:R as V1/V2, nothing new invented or tuned), walking
+forward with no hindsight on direction. Not routed through
+`backtest_engine.run_backtest()` - its signal-at-T/fill-at-T+1-Open
+convention doesn't match "enter the instant broken"; `backtest_engine.py`
+and `risk_management.py` are both untouched by this test. 184/250
+events triggered single-sided (96% on the very first bar after the
+event - the highest-risk window from the check above), 66 excluded as
+ambiguous (both sides breached the same bar).
+
+Reported under two pre-committed execution-cost scenarios, not one
+falsely-precise number: **optimistic** (fill at trigger + that bar's
+own average spread) showed a large, highly significant edge (mean
+R=+0.352, p<0.0001, 67.6% win rate) - the strongest result in the
+search. **Conservative** (+0.25x that bar's own realized range, applied
+only to first-bar triggers) collapsed it to **statistically
+indistinguishable from zero** (mean R=-0.025, p=0.73, 48.0% win rate),
+with FOMC and NFP individually flipping negative and the year-by-year
+pattern turning genuinely inconsistent (2020-2022 negative-leaning,
+only 2023-2024 holding up) - the pre-committed "inconsistent across
+years" rejection trigger, firing under the scenario that matters.
+
+**Verdict, stated precisely because it differs from Hypotheses 1-3**:
+this is not "no effect found." The volatility expansion is real,
+large, and was never in doubt. What could not be established is
+tradeability - the entire apparent edge depends on assuming
+near-costless execution during the one 15-minute window this project's
+own data has been shown, directly and empirically, to be unable to
+measure. **The honest conclusion is that this project's available data
+resolution is insufficient to determine whether this hypothesis is
+tradeable, not that no edge exists.** Resolving it would need tick- or
+second-level bid/ask data, outside this project's OANDA M5/M15/H1/H4/D
+granularities - the single most promising unresolved lead from the
+whole search, if such data ever becomes available.
+
+Full numeric record for all three pieces (round 1, spread-resolution
+check, round 2): `results/hypothesis4_econ_event_volatility_summary.json`.
+Re-runnable, unmodified scripts:
+`hypothesis_tests/econ_event_volatility_round1_statistical.py`,
+`hypothesis_tests/econ_event_volatility_spread_resolution_check.py`,
+`hypothesis_tests/econ_event_volatility_round2_breakout_trigger.py`
+(none imported by anything, kept purely so this exact experiment never
+needs repeating).
+
+**Does not proceed to a strategy build** - not because the phenomenon
+was disproven, but because this project's current data cannot resolve
+the central question with confidence.
 
 ## The strategy
 
@@ -1148,7 +1236,7 @@ results ever look unexpectedly off, check the run's output for a
 | `run_london_sweep_backtest.py` | Entry point for V1 - EUR_USD/GBP_USD only, `dataset_split.split_for_iteration()` exclusively |
 | `signals_london_sweep_trend_aligned_m15.py` | V2 - imports V1's sweep+confirmation logic unchanged, adds a daily EMA50/200 trend-alignment gate. **Rejected after development testing** - see "London Liquidity Sweep Reversal V2" above |
 | `run_london_sweep_trend_aligned_backtest.py` | Entry point for V2 - same scope as V1's entry point, plus daily candle data for the trend gate |
-| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for V3 candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. Currently: `leadlag_falsification.py` (Hypothesis 1, rejected), `gap_fade_falsification_round1_24h_hold.py` + `gap_fade_falsification_round2_closure.py` (Hypothesis 2, rejected), `monthend_falsification.py` (Hypothesis 3, rejected). See "V3 candidate search" above |
+| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. Currently: `leadlag_falsification.py` (H1, rejected), `gap_fade_falsification_round1_24h_hold.py` + `gap_fade_falsification_round2_closure.py` (H2, rejected), `monthend_falsification.py` (H3, rejected), `econ_event_volatility_round1_statistical.py` + `econ_event_volatility_spread_resolution_check.py` + `econ_event_volatility_round2_breakout_trigger.py` + `data/economic_events_development.csv` (H4, rejected but data-resolution-limited, not clean). See "V3 candidate search" and "Hypothesis 4" above |
 | `results/` | Permanently preserved raw results from concluded experiments (V1/V2 full trade-level data + structured summaries, V3 candidate falsification summaries), so an experiment never needs re-running just to recall what happened |
 | `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports M5/M15/H1/H4/D granularities |
 | `indicators.py` | EMA, ATR, rolling high/low channel, SMA, rolling std, RSI |
