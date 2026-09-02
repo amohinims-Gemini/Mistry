@@ -1,0 +1,91 @@
+{
+  "hypothesis": "Hypothesis 4 (beyond the original V3 candidates): Economic Calendar Event Volatility",
+  "research_question": "Does price action around scheduled high-impact economic releases show a statistically meaningful, tradeable volatility expansion that persists after realistic spread/transaction costs, regardless of direction?",
+  "development_window": "2020-08-24 to 2024-07-15 (dataset_split.DEVELOPMENT_START/END)",
+  "event_data_source": {
+    "description": "Hand-curated table built from official, read-only, government/central-bank archives (not the project's own approximate econ_calendar.py, which is explicitly a rough weekly-window heuristic unsuitable for this test)",
+    "sources": ["federalreserve.gov FOMC meeting calendar (main page + fomchistorical2020.htm)", "bls.gov year-by-year release schedule archives (/schedule/{year}/home.htm) for NFP and CPI"],
+    "event_types": {"FOMC": "31 events, 2:00pm ET decision announcement", "NFP": "47 events, 8:30am ET", "CPI": "47 events, 8:30am ET"},
+    "total_events": 125,
+    "instruments": ["EUR_USD", "GBP_USD"],
+    "file": "hypothesis_tests/data/economic_events_development.csv"
+  },
+  "round_1_statistical_volatility_expansion": {
+    "description": "Pure statistics: realized vol (event windows vs. control), breakout-beyond-range incidence, sample cost-adjusted proxy. M15, EUR_USD & GBP_USD, 1h pre-event / 30min+2h post-event windows.",
+    "sample_size": {"combined_event_observations": 250, "per_instrument": 125, "control_observations_combined": 10158},
+    "realized_volatility": {
+      "combined_post_2h_ratio_vs_control": 2.668, "combined_post_2h_p": 0.0000,
+      "combined_post30_ratio_vs_control": 2.533, "combined_post30_p": 0.0000,
+      "vol_ratio_post2h_over_pre_event_mean": 5.642, "vol_ratio_post2h_over_pre_control_mean": 2.389,
+      "by_event_type_vol_ratio_2h": {"FOMC": 8.033, "CPI": 4.956, "NFP": 4.752},
+      "stable_by_year_2020_2024": "ratio 3.5-6.2x every year, never close to control's ~2.4x",
+      "interpretation": "Real, large, overwhelmingly robust effect - the strongest raw statistical finding across the entire V3+V4 search (14 hypotheses prior to this one)"
+    },
+    "breakout_incidence_0.5xATR": {
+      "event_rate_pct": 100.0, "control_rate_pct": 75.8, "p": 0.0000,
+      "interpretation": "Statistically distinguishable but the 0.5xATR threshold was poorly calibrated - near-ceiling for BOTH event and control groups, a weaker/less informative measure than the raw volatility comparison"
+    },
+    "cost_adjusted_edge_ex_post_direction": {
+      "combined_mean_pct_per_trade": 0.0850, "p": 0.0000,
+      "caveat": "Direction chosen with hindsight (known eventual breakout side, not a real-time rule) - this number could not establish real-time tradeability, only that the magnitude of the move clears realistic mid-window Bid/Ask cost when direction happens to be known in advance"
+    },
+    "script": "hypothesis_tests/econ_event_volatility_round1_statistical.py"
+  },
+  "spread_resolution_check": {
+    "description": "Targeted check: can M15-resolution cached data see the true execution cost at the instant of release? Compares each event bar's own Bid/Ask Open (all 125 events land exactly on M15 boundaries) against the prior bar's close-based spread, and against that bar's own realized intrabar range.",
+    "findings": {
+      "EUR_USD": {"open_spread_pips": 3.96, "prior_close_spread_pips": 3.91, "ratio": 1.01, "max_intrabar_range_proxy_pips": 50.37},
+      "GBP_USD": {"open_spread_pips": 8.27, "prior_close_spread_pips": 8.10, "ratio": 1.02, "max_intrabar_range_proxy_pips": 61.12}
+    },
+    "interpretation": "Open-based spread shows NO widening at all (ratio ~1.0-1.02, indistinguishable from normal quiet-market spread), while the bar's own realized range is 10-15x larger. Decisive evidence that a genuine spread spike lasting seconds is averaged away between 15-minute checkpoints - M15 resolution cannot reliably capture true execution cost at the moment of a news-driven break.",
+    "script": "hypothesis_tests/econ_event_volatility_spread_resolution_check.py"
+  },
+  "round_2_breakout_trigger_simulation": {
+    "description": "Genuine non-lookahead, mechanical, dual-sided OCO breakout-trigger simulation. Standalone (not routed through backtest_engine.run_backtest(), whose signal-at-T/fill-at-T+1-Open convention doesn't match 'enter the instant broken'); backtest_engine.py and risk_management.py untouched. Fixed design, nothing swept: 0.1xATR entry buffer (reused from signals_london_sweep_m15.py), structural stop at opposite range side (same buffer style), 1:1 R:R target (same value as V1/V2), 2h trigger window, 24h max hold, same-bar-both-triggered excluded, R-multiple outcome measure (no position sizing/dollar P&L).",
+    "execution_cost_scenarios": {
+      "optimistic": "fill = trigger +/- that bar's own realized average spread",
+      "conservative": "optimistic +/- 0.25x that bar's own (Ask_High-Bid_Low), applied only when the trigger fires on the first bar after the event (177/184 = 96% of triggers did)"
+    },
+    "disposition": {
+      "total_event_instrument_pairs": 250, "no_trigger_pct": 0.0,
+      "ambiguous_same_bar_excluded": 66, "ambiguous_pct": 26.4,
+      "triggered_single_sided": 184, "first_bar_triggers_pct": 96.2,
+      "forced_exit_24h": 5, "used_for_primary_stats_non_forced": 179
+    },
+    "results": {
+      "combined": {"n": 179, "optimistic_mean_r": 0.352, "optimistic_p": 0.0000, "optimistic_win_rate_pct": 67.6,
+                    "conservative_mean_r": -0.025, "conservative_p": 0.7284, "conservative_win_rate_pct": 48.0},
+      "EUR_USD": {"n": 87, "optimistic_mean_r": 0.379, "optimistic_p": 0.0001, "conservative_mean_r": -0.000, "conservative_p": 0.9996},
+      "GBP_USD": {"n": 92, "optimistic_mean_r": 0.326, "optimistic_p": 0.0010, "conservative_mean_r": -0.049, "conservative_p": 0.6247},
+      "by_event_type": {
+        "CPI": {"n": 66, "optimistic_mean_r": 0.515, "optimistic_p": 0.0000, "conservative_mean_r": 0.195, "conservative_p": 0.0990},
+        "FOMC": {"n": 46, "optimistic_mean_r": 0.304, "optimistic_p": 0.0321, "conservative_mean_r": -0.174, "conservative_p": 0.2361},
+        "NFP": {"n": 67, "optimistic_mean_r": 0.224, "optimistic_p": 0.0620, "conservative_mean_r": -0.141, "conservative_p": 0.2327}
+      },
+      "by_year": {
+        "2020": {"n": 15, "optimistic_mean_r": -0.333, "optimistic_p": 0.1859, "conservative_mean_r": -0.333, "conservative_p": 0.1859},
+        "2021": {"n": 48, "optimistic_mean_r": 0.250, "optimistic_p": 0.0767, "conservative_mean_r": -0.179, "conservative_p": 0.1966},
+        "2022": {"n": 52, "optimistic_mean_r": 0.269, "optimistic_p": 0.0459, "conservative_mean_r": -0.252, "conservative_p": 0.0548},
+        "2023": {"n": 41, "optimistic_mean_r": 0.659, "optimistic_p": 0.0000, "conservative_mean_r": 0.286, "conservative_p": 0.0563},
+        "2024": {"n": 23, "optimistic_mean_r": 0.652, "optimistic_p": 0.0001, "conservative_mean_r": 0.454, "conservative_p": 0.0144}
+      }
+    },
+    "interpretation": "The optimistic scenario is the strongest raw signal in the whole search (large, highly significant, consistent across both instruments and all three event types). Under the conservative scenario - a modest, formulaic, non-tuned adjustment applied to 96% of the trade sample, since that's where almost every trigger lands - the entire edge collapses to statistically indistinguishable from zero, FOMC and NFP individually flip to non-significant negative, and the year-by-year pattern becomes genuinely inconsistent (2020-2022 lean negative, only 2023-2024 hold up). This is exactly the pre-committed 'sign/significance inconsistent across years' rejection trigger, firing under the scenario that matters.",
+    "script": "hypothesis_tests/econ_event_volatility_round2_breakout_trigger.py"
+  },
+  "pre_committed_rejection_criteria_evaluation": {
+    "mean_r_not_significantly_positive_optimistic": "NOT triggered - optimistic is strongly, significantly positive",
+    "optimistic_positive_but_conservative_significantly_negative": "NOT triggered by strict letter (conservative is negative but p=0.73, not significant) - but see next criterion",
+    "sign_or_significance_inconsistent_across_years_or_instruments": "TRIGGERED under the conservative scenario - 2020-2022 lean negative, 2023-2024 positive; FOMC and NFP flip negative individually",
+    "trigger_sample_too_small": "NOT the binding constraint - 179 non-forced trades, above the 150 convention"
+  },
+  "verdict": "REJECTED - but not a clean rejection, and explicitly NOT the same finding as Hypotheses 1-3. The underlying market phenomenon (large, robust, highly significant volatility expansion around FOMC/NFP/CPI releases) is real and is the strongest raw finding across the entire 14-prior-hypothesis search. What could not be established is tradeability: the entire apparent edge is attributable to assuming near-costless execution during the single riskiest, least-measurable 15-minute window in the dataset (96% of triggers land there), and a defensible, non-cherry-picked realistic-cost adjustment erases it and destabilizes it across years and event types. The spread-resolution check independently confirmed, directly and empirically, that M15-resolution cached OHLC/Bid-Ask data cannot see the true execution cost at the instant of a news-driven break (Open-based spread shows no widening at all, ratio ~1.0-1.02, while the bar's own realized range is 10-15x larger - a genuine spike lasting seconds is averaged away between 15-minute checkpoints). The honest conclusion is that this project's available data resolution is insufficient to determine whether this hypothesis is tradeable, not that no edge exists. Resolving it would require tick- or second-level bid/ask data, which is outside this project's OANDA M5/M15/H1/H4/D granularities.",
+  "does_not_proceed_to": "V4 strategy build - not because the phenomenon was disproven, but because this project's current data cannot resolve the central question (execution cost at the moment of the break) with confidence.",
+  "note_for_future_work": "If tick- or second-level bid/ask data becomes available for this project, this is the single most promising unresolved lead from the entire search - the volatility-expansion finding itself was never in doubt, only tradeability.",
+  "scripts": [
+    "hypothesis_tests/econ_event_volatility_round1_statistical.py",
+    "hypothesis_tests/econ_event_volatility_spread_resolution_check.py",
+    "hypothesis_tests/econ_event_volatility_round2_breakout_trigger.py"
+  ],
+  "data": "hypothesis_tests/data/economic_events_development.csv"
+}
