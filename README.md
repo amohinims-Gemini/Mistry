@@ -493,6 +493,57 @@ repeating).
 **Does not proceed to V3.** Rejected at the cheap-falsification stage,
 before any strategy code was written.
 
+### Hypothesis 3: Month-End Flow Bias - REJECTED
+
+Mechanism under test: institutional portfolio rebalancing (pension
+funds, currency-hedged mandates, corporate treasury flows) is
+documented to concentrate around month-end, creating a mechanically-
+driven - not "views"-driven - directional flow. Research question:
+does the final trading day / final trading hours of each month show a
+repeatable directional OR volatility bias, materially different from
+ordinary days? (Ranked weakest of the three V3 candidates from the
+start, on both direction-sourcing and trade-count grounds.)
+
+EUR_USD/GBP_USD, H1, n=96 combined month-end days (48/instrument,
+already below the 150-event convention, acknowledged before testing).
+Both close-to-close and intraday returns, plus a final-4-hours window,
+were tested against an ordinary-day control, alongside realized
+volatility.
+
+**No significant directional edge anywhere.** Pooled close-to-close
+mean -0.052% (p=0.21), intraday -0.050% (p=0.22) - neither significant,
+and no hit rate anywhere (40-46%) is statistically distinguishable from
+50%. Direction is negative in 4 of 5 years but flips positive in 2022,
+undermining the "consistent sign" requirement set before testing.
+Cost-adjusted P&L, using the one direction implied by the pooled
+sample's own sign (decided once, not cherry-picked): +0.026%/trade
+combined, **not significant (p=0.52)** - and GBP_USD alone would have
+lost money trading it.
+
+**One genuine, separate finding**: realized volatility in the final 4
+hours of the month is ~23% higher than ordinary days (p=0.012,
+nominally significant) - consistent with well-documented real month-end
+fixing-window activity. Per the pre-registered protocol this is
+necessary but not sufficient to validate a *directional* flow bias -
+it's a volatility fact, not a tradeable edge as this hypothesis was
+framed, and per this project's standing discipline against acting on a
+pattern spotted mid-analysis without independent advance justification,
+it was not treated as grounds to loosen the verdict. Left as a possible
+seed for a genuinely different future idea (volatility-timing), not
+pursued here.
+
+Full pre-registered protocol, all numbers, and the verdict:
+`results/hypothesis3_monthend_falsification_summary.json`. Re-runnable,
+unmodified script preserved at `hypothesis_tests/monthend_falsification.py`
+(not imported by anything, kept purely so this exact test never needs
+repeating).
+
+**Does not proceed to V3.** Rejected at the cheap-falsification stage,
+before any strategy code was written. **All three original V3
+candidates (Cross-Instrument Lead-Lag, Weekend Gap Fade, Month-End Flow
+Bias) are now rejected** - no further V3 hypothesis is currently under
+investigation; next steps have not yet been decided.
+
 ## The strategy
 
 **Markets:** EUR/USD, GBP/USD, USD/JPY, Gold (XAU/USD). Adding another
@@ -1097,7 +1148,7 @@ results ever look unexpectedly off, check the run's output for a
 | `run_london_sweep_backtest.py` | Entry point for V1 - EUR_USD/GBP_USD only, `dataset_split.split_for_iteration()` exclusively |
 | `signals_london_sweep_trend_aligned_m15.py` | V2 - imports V1's sweep+confirmation logic unchanged, adds a daily EMA50/200 trend-alignment gate. **Rejected after development testing** - see "London Liquidity Sweep Reversal V2" above |
 | `run_london_sweep_trend_aligned_backtest.py` | Entry point for V2 - same scope as V1's entry point, plus daily candle data for the trend gate |
-| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for V3 candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. Currently: `leadlag_falsification.py` (Hypothesis 1, rejected), `gap_fade_falsification_round1_24h_hold.py` + `gap_fade_falsification_round2_closure.py` (Hypothesis 2, rejected). See "V3 candidate search" above |
+| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for V3 candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. Currently: `leadlag_falsification.py` (Hypothesis 1, rejected), `gap_fade_falsification_round1_24h_hold.py` + `gap_fade_falsification_round2_closure.py` (Hypothesis 2, rejected), `monthend_falsification.py` (Hypothesis 3, rejected). See "V3 candidate search" above |
 | `results/` | Permanently preserved raw results from concluded experiments (V1/V2 full trade-level data + structured summaries, V3 candidate falsification summaries), so an experiment never needs re-running just to recall what happened |
 | `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports M5/M15/H1/H4/D granularities |
 | `indicators.py` | EMA, ATR, rolling high/low channel, SMA, rolling std, RSI |
