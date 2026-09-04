@@ -544,7 +544,7 @@ candidates (Cross-Instrument Lead-Lag, Weekend Gap Fade, Month-End Flow
 Bias) are now rejected.** One further hypothesis, outside the original
 three, was investigated afterward - see "Hypothesis 4" below.
 
-## Hypothesis 4: Economic Calendar Event Volatility - REJECTED, but not cleanly
+## Hypothesis 4: Economic Calendar Event Volatility - REJECTED (decisively, after round 3)
 
 Introduces a genuinely new data source (a scheduled macro-event
 calendar) alongside price data - the first hypothesis in this entire
@@ -606,31 +606,77 @@ pattern turning genuinely inconsistent (2020-2022 negative-leaning,
 only 2023-2024 holding up) - the pre-committed "inconsistent across
 years" rejection trigger, firing under the scenario that matters.
 
-**Verdict, stated precisely because it differs from Hypotheses 1-3**:
-this is not "no effect found." The volatility expansion is real,
-large, and was never in doubt. What could not be established is
-tradeability - the entire apparent edge depends on assuming
-near-costless execution during the one 15-minute window this project's
-own data has been shown, directly and empirically, to be unable to
-measure. **The honest conclusion is that this project's available data
-resolution is insufficient to determine whether this hypothesis is
-tradeable, not that no edge exists.** Resolving it would need tick- or
-second-level bid/ask data, outside this project's OANDA M5/M15/H1/H4/D
-granularities - the single most promising unresolved lead from the
-whole search, if such data ever becomes available.
+**Round 2 conclusion at the time**: not "no effect found" - the
+volatility expansion was real and never in doubt, but tradeability
+couldn't be established because M15 data was shown unable to measure
+execution cost at the moment of the break. Left open, not rejected
+outright, pending finer-grained data.
 
-Full numeric record for all three pieces (round 1, spread-resolution
-check, round 2): `results/hypothesis4_econ_event_volatility_summary.json`.
-Re-runnable, unmodified scripts:
+**Round 3 (finest available resolution, closes the question)**:
+S5 (5-second candles) - confirmed empirically the finest granularity
+OANDA's API offers, and available all the way back to the start of
+DEVELOPMENT for both instruments via the exact same read-only
+connection already used everywhere in this project. Fetched as ~310
+targeted event windows (not a bulk download). Reran round 2's *exact*
+fixed design unchanged (0.1xATR entry buffer, same structural stop,
+1:1 R:R, 24h max hold) - only the resolution and cost-realism changed:
+real S5 Ask/Bid fills (no more optimistic/conservative bracketing -
+S5 lets the real spread be seen directly) plus `SLIPPAGE_ATR_FRACTION
+= 0.02`, reused verbatim from `backtest_engine.py`. The
+ambiguous-same-bar rate dropped from 26.4% (M15) to 5.2% (S5),
+confirming finer resolution resolves almost all of round 2's entry
+ambiguity.
+
+Used the project's existing three-way split unchanged: DEVELOPMENT as
+train (125 events, walk-forward by year) and, for the first time for
+any strategy in this project, a genuine **VALIDATION** out-of-sample
+check (31 new events for 2024-07-15 to 2025-07-15, hand-curated from
+the same official sources) - checked exactly once. **FINAL_RESERVED
+was not accessed.**
+
+| | n | win rate | expectancy (mean R) | profit factor | max drawdown |
+|---|---|---|---|---|---|
+| DEVELOPMENT (train) | 221 | 39.4% | -0.213R (p=0.0012) | 0.649 | 53R |
+| **VALIDATION (OOS, checked once)** | 53 | 20.8% | **-0.585R (p<0.0001)** | 0.262 | 30R |
+
+Negative every year in DEVELOPMENT (trending toward breakeven late,
+never positive), negative for both instruments individually in
+VALIDATION, negative for all three event types, flat-to-negative in
+every session bucket - and **more** unprofitable out-of-sample than in
+training, not less. This directly confirms round 2's core concern: the
+earlier "optimistic" M15 result (+0.352R) was an artifact of
+underestimated execution cost. Real S5 bid/ask plus realistic slippage
+doesn't just erase the edge - it flips it solidly negative and keeps
+it negative out-of-sample.
+
+**Verdict, per the pre-committed rule ("if H4 does not remain
+profitable out-of-sample after costs, reject it")**: REJECTED,
+decisively. The underlying volatility-expansion phenomenon (round 1)
+remains a genuine, confirmed market fact - what round 3 resolves is
+that it is **not** capturable as a tradeable edge once realistic
+execution is modeled at the finest resolution available. This closes
+the question round 2 left open; no further work on this specific
+hypothesis is warranted absent a fundamentally different execution
+model or a different instrument.
+
+Full numeric record for all four pieces (round 1, spread-resolution
+check, round 2, round 3):
+`results/hypothesis4_econ_event_volatility_summary.json`. Re-runnable,
+unmodified scripts:
 `hypothesis_tests/econ_event_volatility_round1_statistical.py`,
 `hypothesis_tests/econ_event_volatility_spread_resolution_check.py`,
-`hypothesis_tests/econ_event_volatility_round2_breakout_trigger.py`
+`hypothesis_tests/econ_event_volatility_round2_breakout_trigger.py`,
+`hypothesis_tests/econ_event_volatility_round3_s5_fetch.py`,
+`hypothesis_tests/econ_event_volatility_round3_s5_simulation.py`
 (none imported by anything, kept purely so this exact experiment never
-needs repeating).
+needs repeating). The VALIDATION event table
+(`hypothesis_tests/data/economic_events_validation.csv`) is committed;
+the raw S5 candle cache (~60MB, regenerable via the fetch script) is
+gitignored, same treatment as `data_cache/`.
 
-**Does not proceed to a strategy build** - not because the phenomenon
-was disproven, but because this project's current data cannot resolve
-the central question with confidence.
+**Does not proceed to a strategy build or demo-bot validation stage**
+- the phenomenon is real but not tradeable at any resolution this
+project has been able to test, including the finest OANDA offers.
 
 ## The strategy
 
@@ -1236,7 +1282,7 @@ results ever look unexpectedly off, check the run's output for a
 | `run_london_sweep_backtest.py` | Entry point for V1 - EUR_USD/GBP_USD only, `dataset_split.split_for_iteration()` exclusively |
 | `signals_london_sweep_trend_aligned_m15.py` | V2 - imports V1's sweep+confirmation logic unchanged, adds a daily EMA50/200 trend-alignment gate. **Rejected after development testing** - see "London Liquidity Sweep Reversal V2" above |
 | `run_london_sweep_trend_aligned_backtest.py` | Entry point for V2 - same scope as V1's entry point, plus daily candle data for the trend gate |
-| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. Currently: `leadlag_falsification.py` (H1, rejected), `gap_fade_falsification_round1_24h_hold.py` + `gap_fade_falsification_round2_closure.py` (H2, rejected), `monthend_falsification.py` (H3, rejected), `econ_event_volatility_round1_statistical.py` + `econ_event_volatility_spread_resolution_check.py` + `econ_event_volatility_round2_breakout_trigger.py` + `data/economic_events_development.csv` (H4, rejected but data-resolution-limited, not clean). See "V3 candidate search" and "Hypothesis 4" above |
+| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. Currently: `leadlag_falsification.py` (H1, rejected), `gap_fade_falsification_round1_24h_hold.py` + `gap_fade_falsification_round2_closure.py` (H2, rejected), `monthend_falsification.py` (H3, rejected), `econ_event_volatility_round1_statistical.py` + `..._spread_resolution_check.py` + `..._round2_breakout_trigger.py` + `..._round3_s5_fetch.py` + `..._round3_s5_simulation.py` + `data/economic_events_development.csv` + `data/economic_events_validation.csv` (H4, REJECTED decisively after round 3's finest-resolution, out-of-sample-confirmed test - `data/s5_cache/` is the large, regenerable, gitignored raw S5 candle cache behind it). See "V3 candidate search" and "Hypothesis 4" above |
 | `results/` | Permanently preserved raw results from concluded experiments (V1/V2 full trade-level data + structured summaries, V3 candidate falsification summaries), so an experiment never needs re-running just to recall what happened |
 | `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports M5/M15/H1/H4/D granularities |
 | `indicators.py` | EMA, ATR, rolling high/low channel, SMA, rolling std, RSI |
