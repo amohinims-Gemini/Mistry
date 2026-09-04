@@ -1,0 +1,61 @@
+{
+  "hypothesis": "Mean-Reversion V2: Short-Horizon Return-Extreme Reversal",
+  "research_question": "After a statistically extreme multi-bar return (z-scored against its own trailing volatility), does price tend to reverse over a comparable following window - a classical short-term-reversal/liquidity-provision-correction mechanism, deliberately distinct from the old rejected Bollinger+RSI+trend-efficiency mean-reversion baseline and from Hypothesis 1's own unconditional lag-1 autocorrelation finding (attributed to bid-ask-bounce noise)?",
+  "why_this_is_not_a_retune": {
+    "old_baseline": "mean_reversion_signals_4h.py: Bollinger(20,2std) band + RSI(14,30/70) + Kaufman trend-efficiency filter - a 'stretched from a short-term range, in a non-trending market' story. Tried at 1H/4H/daily, all REJECTED (near-breakeven at best).",
+    "this_hypothesis": "a z-scored MULTI-BAR RETURN extreme (no bands, no RSI, no trend filter) - a 'sharp, fast move overreacted and partially reverses' story, mechanistically distinct.",
+    "distinction_from_H1_baseline_A": "H1's Baseline A found GBP_USD's unconditional lag-1 M15 autocorrelation was weakly negative (r=-0.030, p<0.0001) but attributed this to generic bid-ask-bounce microstructure noise, not a real economic effect, since it appeared symmetrically regardless of which instrument 'led'. This test uses 4H (far coarser, much less bid-ask-bounce-prone) and CONDITIONS on a genuine multi-bar statistical extreme (|z|>=2), not the unconditional bar-to-bar autocorrelation H1 already found and explained away."
+  },
+  "scope": {
+    "instruments": "PORTFOLIO_SYMBOLS - EUR_USD, GBP_USD, USD_JPY, XAU_USD (same scope as the old 4H mean-reversion baseline being re-tested)",
+    "timeframe": "H4",
+    "development_window": "2020-08-24 to 2024-07-15 (dataset_split.DEVELOPMENT_START/END)"
+  },
+  "pre_registered_protocol": {
+    "return_window": "3 bars (12h) cumulative log return at 4H",
+    "zscore_normalization": "trigger return divided by its own trailing 60-bar (~10 trading days) standard deviation - fixed, standard normalization, not tuned",
+    "extreme_threshold": "|z| >= 2.0 - standard 2-sigma convention, fixed, not swept",
+    "forward_window": "the FOLLOWING 3-bar (12h) cumulative log return - same horizon as the trigger window",
+    "no_lookahead": "z-score and classification use only data up to and including the trigger bar's own close; forward window is strictly after",
+    "mechanical_simulation_design_not_run": "direction counter to the extreme (short after extreme-up, long after extreme-down), entry at next bar's Open with realistic Ask/Bid fill + SLIPPAGE_ATR_FRACTION=0.02xATR (reused from backtest_engine.py), structural stop beyond the extreme run's own multi-bar High/Low + 0.1xATR buffer (reused style from V1/V2/H4/Candidate 2), fixed 1:1 R:R target, 70/30 chronological train/test split matching run_backtest.py's TRAIN_FRACTION - designed but NEVER EXECUTED because Part 1's statistical premise was rejected first"
+  },
+  "pre_committed_rejection_criteria": {
+    "stage_1_statistical_premise": "REJECTED if forward return is not significantly reversal-signed in BOTH directions (extreme-up group not significantly negative, OR extreme-down group not significantly positive) - no mechanical trade simulation run if triggered",
+    "stage_2_would_have_applied_if_stage_1_survived": "REJECTED if mechanical trade simulation's profit factor does not clear the NEW standing bar (>1.3) in BOTH train AND test, or if train/test PF diverges beyond the new standing tolerance (test PF < 0.65x train PF)"
+  },
+  "results_part1_statistical_premise": {
+    "sample_size": {"combined_extreme_up": 698, "combined_extreme_down": 738,
+      "per_instrument": {"EUR_USD": {"up": 175, "down": 176}, "GBP_USD": {"up": 163, "down": 178},
+                          "USD_JPY": {"up": 169, "down": 198}, "XAU_USD": {"up": 191, "down": 186}}},
+    "combined": {
+      "extreme_up": {"mean_forward_return_pct": -0.033, "t_stat": -1.91, "p_value": 0.0566, "reversal_rate_pct": 54.4, "reversal_rate_p": 0.0189, "note": "correctly signed (negative) but not significant at combined level"},
+      "extreme_down": {"mean_forward_return_pct": -0.024, "t_stat": -1.20, "p_value": 0.2299, "reversal_rate_pct": 53.1, "reversal_rate_p": 0.0900, "note": "WRONG-signed (should be positive for reversal) and not significant"}
+    },
+    "per_instrument": {
+      "EUR_USD": {"extreme_up": {"mean_pct": -0.0795, "p": 0.0013, "reversal_rate_pct": 63.4, "reversal_p": 0.0004},
+                   "extreme_down": {"mean_pct": 0.0136, "p": 0.5230, "reversal_rate_pct": 58.0, "reversal_p": 0.0348},
+                   "note": "the one cell with a genuinely significant, correctly-signed reversal - but only one of eight instrument x direction combinations tested"},
+      "GBP_USD": {"extreme_up": {"mean_pct": -0.0413, "p": 0.1401, "reversal_rate_pct": 55.8, "reversal_p": 0.1367},
+                   "extreme_down": {"mean_pct": -0.0344, "p": 0.5272, "reversal_rate_pct": 50.0, "reversal_p": 1.0000},
+                   "note": "no significant effect either direction"},
+      "USD_JPY": {"extreme_up": {"mean_pct": 0.0394, "p": 0.2571, "reversal_rate_pct": 43.8, "reversal_p": 0.1062},
+                   "extreme_down": {"mean_pct": 0.0001, "p": 0.9967, "reversal_rate_pct": 56.1, "reversal_p": 0.0881},
+                   "note": "extreme-up group WRONG-signed (continuation, not reversal), though not significant"},
+      "XAU_USD": {"extreme_up": {"mean_pct": -0.0476, "p": 0.2832, "reversal_rate_pct": 54.5, "reversal_p": 0.2187},
+                   "extreme_down": {"mean_pct": -0.0756, "p": 0.0946, "reversal_rate_pct": 48.4, "reversal_p": 0.6600},
+                   "note": "extreme-down group WRONG-signed (continuation, not reversal)"}
+    },
+    "stability_by_year_combined_pooled_reversal_signed_return": {
+      "2020": {"n": 111, "mean_pct": 0.1050, "p": 0.0093, "note": "only significant year"},
+      "2021": {"n": 361, "mean_pct": -0.0339, "p": 0.1241, "note": "wrong-signed"},
+      "2022": {"n": 383, "mean_pct": 0.0197, "p": 0.5621},
+      "2023": {"n": 373, "mean_pct": 0.0002, "p": 0.9943, "note": "near zero"},
+      "2024": {"n": 208, "mean_pct": -0.0082, "p": 0.7916, "note": "wrong-signed"}
+    },
+    "interpretation": "No stable, consistent reversal pattern across instruments or years. The one nominally-significant, correctly-signed result (EUR_USD extreme-up) is one cell out of eight instrument x direction combinations tested - with that many comparisons, one nominally-significant hit is close to what chance alone predicts, and it wasn't paired with a significant reversal on the same instrument's other side or replicated in any other instrument."
+  },
+  "results_part2_mechanical_simulation": "NOT RUN - stopped per the pre-committed stage-1 rejection rule before any trade simulation, cost modeling, or evaluation against the new standing criteria (PF>=1.3, trade count, IS/OOS similarity, concentration, multi-regime) was performed.",
+  "verdict": "REJECTED at the statistical-premise stage. Neither pre-committed condition was cleared: the extreme-down group is wrong-signed and not significant; the extreme-up group is correctly signed but only borderline (p=0.057, not significant) at the combined level. Results are inconsistent across both instruments (2 of 4 show a wrong-signed continuation on at least one side) and years (only 2020 significant, 2 of 5 years wrong-signed). This differs in KIND from Candidates 1-3 (which also failed on premise) and from Hypothesis 4 (which survived the premise and failed on execution cost) - this is a clean premise-stage rejection, killed at the cheapest possible point in the process, before any mechanical trade simulation or cost modeling was attempted.",
+  "does_not_proceed_to": "Mechanical trade simulation, signals module build, tests, or entry point - none were written. Mean-reversion as a signal type, retested fresh (not reusing the old baseline's Bollinger/RSI construction), still does not hold up in this project's data.",
+  "script": "hypothesis_tests/meanrev_v2_feasibility.py"
+}

@@ -871,6 +871,71 @@ Combined with the original 9-approach systematic search, V1/V2, and
 Hypotheses 1-4, this brings the project's total to **17 independently
 tried structural ideas, none surviving.**
 
+## Mean-Reversion V2: Short-Horizon Return-Extreme Reversal - REJECTED at the statistical-premise stage
+
+The first hypothesis tested against the strengthened standing criteria
+(see above), and an explicit re-test of mean-reversion **as a signal
+type**, not a reuse of the old, already-rejected 4H mean-reversion
+baseline (`mean_reversion_signals_4h.py`: Bollinger(20,2std) band +
+RSI(14,30/70) + Kaufman trend-efficiency filter - a "stretched from a
+short-term range, in a non-trending market" story, rejected near-
+breakeven at 1H/4H/daily). This hypothesis is mechanistically
+different: a z-scored **multi-bar return extreme** (no bands, no RSI,
+no trend filter) - a classical "sharp move overreacts and partially
+reverses" story. Also explicitly distinguished from **Hypothesis 1's
+own Baseline A** (GBP_USD's unconditional 1-bar M15 lag-1
+autocorrelation, r=-0.030, p<0.0001 - reversal-signed but attributed to
+generic bid-ask-bounce microstructure noise, not a real effect, since
+it appeared symmetrically regardless of which instrument "led"): this
+test uses 4H (far coarser, much less bid-ask-bounce-prone) and
+conditions on a genuine 2-sigma multi-bar extreme, not routine
+bar-to-bar noise.
+
+**Scope**: same instruments/timeframe as the old baseline being
+re-tested - `PORTFOLIO_SYMBOLS` (EUR_USD/GBP_USD/USD_JPY/XAU_USD), 4H,
+DEVELOPMENT only. **Frozen protocol**: 3-bar (12h) cumulative return,
+z-scored against its own trailing 60-bar std dev; |z|>=2.0 (standard,
+fixed threshold, not swept); forward window matches the trigger window
+(3 bars). **Pre-committed rejection rule**, stated before running: if
+the forward return isn't significantly reversal-signed in *both*
+directions, stop before any mechanical trade simulation - the cheapest
+possible kill point, one stage earlier than every prior cheap check in
+this search.
+
+**Result**: neither condition cleared. Combined extreme-up forward
+return was correctly signed (-0.033%) but only borderline (p=0.057,
+not significant); combined extreme-down was **wrong-signed** (-0.024%,
+should be positive for reversal) and not significant (p=0.230).
+Per-instrument, this is inconsistent, not just weak: EUR_USD showed a
+real, significant reversal on the up side (p=0.001, 63% hit rate) - but
+its down side wasn't significant. USD_JPY's extreme-up group and
+XAU_USD's extreme-down group each showed the **wrong sign**
+(continuation, not reversal). GBP_USD showed nothing in either
+direction. Per-year: only 2020 was significant (p=0.009); 2021 and
+2024 were wrong-signed; 2022-2023 near zero. With eight
+instrument-x-direction cells tested, one nominally-significant,
+correctly-signed result (EUR_USD extreme-up) is close to what chance
+alone predicts, and it wasn't replicated anywhere else.
+
+**REJECTED at the statistical-premise stage** - the mechanical trade
+simulation (realistic costs, 70/30 split, evaluation against the new
+standing bar) was designed but never executed, per the pre-committed
+stop rule. This differs in kind from Candidates 1-3 (also premise-stage
+rejections) and from Hypothesis 4 (which survived the premise and
+failed on execution cost): a clean, cheap premise-stage kill, the
+earliest possible stopping point used in this search so far.
+
+Full pre-registered protocol, all numbers, and the verdict:
+`results/meanrev_v2_feasibility_summary.json`. Re-runnable, unmodified
+script preserved at `hypothesis_tests/meanrev_v2_feasibility.py` (not
+imported by anything, kept purely so this exact test never needs
+repeating).
+
+**Does not proceed to a build.** Mean-reversion as a signal type,
+retested fresh, still does not hold up in this project's data. This
+brings the project's total to **18 independently tried structural
+ideas, none surviving.**
+
 ## The strategy
 
 **Markets:** EUR/USD, GBP/USD, USD/JPY, Gold (XAU/USD). Adding another
@@ -1477,7 +1542,7 @@ results ever look unexpectedly off, check the run's output for a
 | `run_london_sweep_trend_aligned_backtest.py` | Entry point for V2 - same scope as V1's entry point, plus daily candle data for the trend gate |
 | `signals_london_breakout_continuation_m15.py` | Post-H4 Candidate 2 - reuses V1's Asian-range infrastructure unchanged, trades WITH a confirmed breakout instead of against it (opposite mechanism from V1/V2). **Rejected after development testing** - see "Post-H4 structural search" above |
 | `run_london_breakout_continuation_backtest.py` | Entry point for Candidate 2 - runs through the standard, unmodified `run_backtest()` (unlike H4, this signal's timing matches the engine's own fill convention) |
-| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. Currently: `leadlag_falsification.py` (H1, rejected), `gap_fade_falsification_round1_24h_hold.py` + `gap_fade_falsification_round2_closure.py` (H2, rejected), `monthend_falsification.py` (H3, rejected), `econ_event_volatility_round1_statistical.py` + `..._spread_resolution_check.py` + `..._round2_breakout_trigger.py` + `..._round3_s5_fetch.py` + `..._round3_s5_simulation.py` + `data/economic_events_development.csv` + `data/economic_events_validation.csv` (H4, REJECTED decisively after round 3's finest-resolution, out-of-sample-confirmed test - `data/s5_cache/` is the large, regenerable, gitignored raw S5 candle cache behind it), `roundnumber_falsification.py` (post-H4 Candidate 3, rejected at the pre-check stage). See "V3 candidate search", "Hypothesis 4", and "Post-H4 structural search" above |
+| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. Currently: `leadlag_falsification.py` (H1, rejected), `gap_fade_falsification_round1_24h_hold.py` + `gap_fade_falsification_round2_closure.py` (H2, rejected), `monthend_falsification.py` (H3, rejected), `econ_event_volatility_round1_statistical.py` + `..._spread_resolution_check.py` + `..._round2_breakout_trigger.py` + `..._round3_s5_fetch.py` + `..._round3_s5_simulation.py` + `data/economic_events_development.csv` + `data/economic_events_validation.csv` (H4, REJECTED decisively after round 3's finest-resolution, out-of-sample-confirmed test - `data/s5_cache/` is the large, regenerable, gitignored raw S5 candle cache behind it), `roundnumber_falsification.py` (post-H4 Candidate 3, rejected at the pre-check stage), `meanrev_v2_feasibility.py` (Mean-Reversion V2, rejected at the statistical-premise stage). See "V3 candidate search", "Hypothesis 4", "Post-H4 structural search", and "Mean-Reversion V2" above |
 | `results/` | Permanently preserved raw results from concluded experiments (V1/V2 full trade-level data + structured summaries, V3 candidate falsification summaries), so an experiment never needs re-running just to recall what happened |
 | `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports M5/M15/H1/H4/D granularities |
 | `indicators.py` | EMA, ATR, rolling high/low channel, SMA, rolling std, RSI |
