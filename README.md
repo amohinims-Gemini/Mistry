@@ -678,7 +678,7 @@ gitignored, same treatment as `data_cache/`.
 - the phenomenon is real but not tradeable at any resolution this
 project has been able to test, including the finest OANDA offers.
 
-## Post-H4 structural search: 3 candidates proposed, Candidate 2 built and REJECTED
+## Post-H4 structural search: all 3 candidates resolved, all REJECTED
 
 With all H1-H4 avenues closed, a fresh read-only project review proposed
 three genuinely different structural hypotheses - not variations of
@@ -697,12 +697,10 @@ criteria stated before any code was written:
    the reversal hypothesis itself, not confirmation logic, as the
    primary failure - re-testing would need a genuinely new angle to be
    worth the cost, rated weakest of the three candidates for that reason.
-3. **Round-Number Level Consolidation** - not built. A genuinely
-   different, price-level-anchored (not session-time-anchored)
-   mechanism; requires its own cheap statistical pre-check (does
-   volatility actually compress near round numbers vs. an ordinary-time
-   control, same discipline as H2/H3) before any entry logic, which
-   has not yet been run.
+3. **Round-Number Level Consolidation** (cheap pre-check run, see
+   below) - a genuinely different, price-level-anchored (not
+   session-time-anchored) mechanism; REJECTED at the pre-check stage,
+   before any entry logic was written.
 
 ### Asian/London Range Breakout - Continuation - REJECTED after development testing
 
@@ -774,6 +772,53 @@ deleted, per the same decision as V1/V2:
 `signals_london_breakout_continuation_m15.py`,
 `run_london_breakout_continuation_backtest.py`, and their tests remain
 in the repository as a complete, honestly-labeled failed experiment.
+
+### Round-Number Level Consolidation - REJECTED at the pre-check stage
+
+Research question: does realized volatility measurably *compress* when
+price is near a round number (institutional order-clustering /
+psychological-level effect - a genuinely different, price-level-
+anchored mechanism, not session-time-anchored like every other
+candidate in this search)? Per the approved design, this required a
+cheap statistical pre-check *before* any entry/exit logic - exactly
+the H1-H3 discipline, applied here for the first time to a post-H4
+candidate.
+
+**Frozen protocol**: round level = multiple of 0.0050 (the standard FX
+big-figure + half-figure convention, not tuned); "near" = Close within
+0.1xATR(14) of the nearest round level (the same buffer fraction
+reused throughout this whole project); volatility = realized vol over
+the following 2h window (the same measure already used for H2/H3/H4,
+for direct comparability); binary near/far split, no separate control-
+window definition needed. **Pre-committed survival bar**: near-level
+volatility must be significantly *lower* than far - a null or wrong-
+signed result rejects the idea outright, before any code is written.
+
+**Result: wrong-signed, decisively.** Volatility near round levels was
+**~28% HIGHER**, not lower, than far from them - combined ratio 1.282
+(p<0.0001), consistent in both instruments (EUR_USD 1.252, GBP_USD
+1.266) and, notably, in **every single year 2020-2024** (ratios
+1.14-1.27, all p<0.0001) - not a fluke of one regime. A plausible,
+not-further-investigated explanation: price is likely classified
+"near" a round level in the first place because it's actively moving
+*through* the area, not because it's stalling there - the
+classification may be capturing momentum bars, not consolidation ones.
+Order clustering at round numbers may still be a real microstructure
+phenomenon; it simply doesn't produce the volatility-dampening
+signature this candidate's entry logic needed.
+
+**REJECTED at the pre-check stage** - per the candidate's own approved
+design, this does not proceed to any entry/exit design or backtest.
+Full pre-registered protocol, all numbers, and the verdict:
+`results/candidate3_roundnumber_falsification_summary.json`.
+Re-runnable, unmodified script preserved at
+`hypothesis_tests/roundnumber_falsification.py` (not imported by
+anything, kept purely so this exact test never needs repeating).
+
+**All three post-H4 candidates are now resolved, all REJECTED.**
+Combined with the original 9-approach systematic search, V1/V2, and
+Hypotheses 1-4, this brings the project's total to **17 independently
+tried structural ideas, none surviving.**
 
 ## The strategy
 
@@ -1381,7 +1426,7 @@ results ever look unexpectedly off, check the run's output for a
 | `run_london_sweep_trend_aligned_backtest.py` | Entry point for V2 - same scope as V1's entry point, plus daily candle data for the trend gate |
 | `signals_london_breakout_continuation_m15.py` | Post-H4 Candidate 2 - reuses V1's Asian-range infrastructure unchanged, trades WITH a confirmed breakout instead of against it (opposite mechanism from V1/V2). **Rejected after development testing** - see "Post-H4 structural search" above |
 | `run_london_breakout_continuation_backtest.py` | Entry point for Candidate 2 - runs through the standard, unmodified `run_backtest()` (unlike H4, this signal's timing matches the engine's own fill convention) |
-| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. Currently: `leadlag_falsification.py` (H1, rejected), `gap_fade_falsification_round1_24h_hold.py` + `gap_fade_falsification_round2_closure.py` (H2, rejected), `monthend_falsification.py` (H3, rejected), `econ_event_volatility_round1_statistical.py` + `..._spread_resolution_check.py` + `..._round2_breakout_trigger.py` + `..._round3_s5_fetch.py` + `..._round3_s5_simulation.py` + `data/economic_events_development.csv` + `data/economic_events_validation.csv` (H4, REJECTED decisively after round 3's finest-resolution, out-of-sample-confirmed test - `data/s5_cache/` is the large, regenerable, gitignored raw S5 candle cache behind it). See "V3 candidate search" and "Hypothesis 4" above |
+| `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. Currently: `leadlag_falsification.py` (H1, rejected), `gap_fade_falsification_round1_24h_hold.py` + `gap_fade_falsification_round2_closure.py` (H2, rejected), `monthend_falsification.py` (H3, rejected), `econ_event_volatility_round1_statistical.py` + `..._spread_resolution_check.py` + `..._round2_breakout_trigger.py` + `..._round3_s5_fetch.py` + `..._round3_s5_simulation.py` + `data/economic_events_development.csv` + `data/economic_events_validation.csv` (H4, REJECTED decisively after round 3's finest-resolution, out-of-sample-confirmed test - `data/s5_cache/` is the large, regenerable, gitignored raw S5 candle cache behind it), `roundnumber_falsification.py` (post-H4 Candidate 3, rejected at the pre-check stage). See "V3 candidate search", "Hypothesis 4", and "Post-H4 structural search" above |
 | `results/` | Permanently preserved raw results from concluded experiments (V1/V2 full trade-level data + structured summaries, V3 candidate falsification summaries), so an experiment never needs re-running just to recall what happened |
 | `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports M5/M15/H1/H4/D granularities |
 | `indicators.py` | EMA, ATR, rolling high/low channel, SMA, rolling std, RSI |
