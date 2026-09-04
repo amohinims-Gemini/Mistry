@@ -1,0 +1,41 @@
+{
+  "hypothesis": "Post-H4 Candidate 3: Round-Number Level Consolidation",
+  "research_question": "Does realized volatility measurably COMPRESS when price is near a round number (institutional order-clustering / psychological level), relative to an ordinary-time control? Pre-check required before any entry/exit logic, per the approved candidate-3 proposal.",
+  "development_window": "2020-08-24 to 2024-07-15 (dataset_split.DEVELOPMENT_START/END)",
+  "pre_registered_protocol": {
+    "round_level_definition": "any price that is a multiple of 0.0050 (50 pips) - standard FX big-figure (0.0100) + half-figure (0.0050 midpoint) convention combined, a fixed market convention, not tuned or swept",
+    "near_definition": "Close within 0.1xATR(14) of the nearest round level - same buffer fraction reused throughout every other module in this project, not independently chosen for this test",
+    "control": "binary classification - 'far' is simply the complement of 'near', no separate/ambiguous control-window definition needed",
+    "volatility_measure": "realized vol = sqrt(sum of squared M15 log returns) over the FOLLOWING 2-hour window - same measure and window already used for H2's closure check, H3's day-level check, and H4's event check, reused for direct comparability",
+    "no_lookahead": "classification uses only that bar's own Close and the ATR value known as of that bar; the round-level grid is fixed, not derived from future data; the volatility measure is strictly over the bar's own FOLLOWING window",
+    "survival_bar": "realized volatility in the 'near' group must be significantly LOWER than the 'far' group (compression, as hypothesized), stable in sign across both instruments and most years, to proceed to any entry/exit design",
+    "automatic_rejection": "a null or wrong-signed result (near-level volatility equal to or HIGHER than far) rejects the hypothesis outright before any entry/exit code is written, same standard as Hypotheses 1-3"
+  },
+  "sample_size": {
+    "near_combined": 5565,
+    "near_EUR_USD": 2272,
+    "near_EUR_USD_pct_of_bars": 2.35,
+    "near_GBP_USD": 3293,
+    "near_GBP_USD_pct_of_bars": 3.40,
+    "far_combined": 188060
+  },
+  "results": {
+    "EUR_USD": {"near_vol_pct": 0.1394, "far_vol_pct": 0.1113, "ratio": 1.2519, "t_stat": 11.901, "p_value": 0.0000},
+    "GBP_USD": {"near_vol_pct": 0.1679, "far_vol_pct": 0.1326, "ratio": 1.2657, "t_stat": 13.936, "p_value": 0.0000},
+    "COMBINED": {"near_vol_pct": 0.1563, "far_vol_pct": 0.1219, "ratio": 1.2815, "t_stat": 19.200, "p_value": 0.0000},
+    "interpretation": "Volatility is ~28% HIGHER, not lower, near round levels - the opposite sign from the consolidation hypothesis. Not noise: highly significant (p<0.0001) in both instruments individually and combined."
+  },
+  "stability_by_year_combined": {
+    "2020": {"n_near": 619, "near_vol_pct": 0.1631, "far_vol_pct": 0.1314, "ratio": 1.2412, "p": 0.0000},
+    "2021": {"n_near": 1197, "near_vol_pct": 0.1115, "far_vol_pct": 0.0965, "ratio": 1.1557, "p": 0.0000},
+    "2022": {"n_near": 1858, "near_vol_pct": 0.2114, "far_vol_pct": 0.1681, "ratio": 1.2578, "p": 0.0000},
+    "2023": {"n_near": 1383, "near_vol_pct": 0.1355, "far_vol_pct": 0.1185, "ratio": 1.1427, "p": 0.0000},
+    "2024": {"n_near": 508, "near_vol_pct": 0.1084, "far_vol_pct": 0.0851, "ratio": 1.2728, "p": 0.0000},
+    "interpretation": "The wrong-signed (expansion, not compression) effect is stable and significant in every single year 2020-2024 - not a fluke of one regime."
+  },
+  "possible_explanation_not_further_investigated": "Price is plausibly classified as 'near' a round level in the first place because it is actively moving through the area (momentum), not because it is stalling/consolidating there - so the classification may disproportionately capture mid-move bars rather than genuine consolidation. Order clustering at round numbers may still be a real microstructure phenomenon, but it is not producing the volatility-dampening signature this candidate's entry logic would have needed. Not investigated further since the pre-check already resolved the question per its own pre-committed bar.",
+  "verdict": "REJECTED at the pre-check stage, before any entry/exit logic was written - exactly the outcome the cheap-check discipline is designed to produce. The pre-committed survival bar (significant compression, stable sign across instruments and years) was not met; instead the result is a significant, stable, wrong-signed EXPANSION effect.",
+  "does_not_proceed_to": "Entry/exit design or backtest - the candidate's own approved design specified this exact stop condition.",
+  "closes_out": "All three post-H4 candidates are now resolved: Candidate 1 (re-tried London Sweep with an S5 exhaustion filter) was never built - too close to two prior direct rejections (V1, V2) to be worth the cost without a genuinely new angle. Candidate 2 (Asian/London Range Breakout - Continuation) was built and REJECTED after a full development backtest. Candidate 3 (this one) is REJECTED at the cheap pre-check stage. Combined with the original 9-approach systematic search, V1/V2, and Hypotheses 1-4, this brings the project's total to 17 independently tried structural ideas, none surviving.",
+  "script": "hypothesis_tests/roundnumber_falsification.py"
+}
