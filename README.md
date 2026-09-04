@@ -678,6 +678,103 @@ gitignored, same treatment as `data_cache/`.
 - the phenomenon is real but not tradeable at any resolution this
 project has been able to test, including the finest OANDA offers.
 
+## Post-H4 structural search: 3 candidates proposed, Candidate 2 built and REJECTED
+
+With all H1-H4 avenues closed, a fresh read-only project review proposed
+three genuinely different structural hypotheses - not variations of
+trend-following, mean-reversion, momentum, or the sweep/H1-H4 families -
+each with entry/exit rules, an economic rationale, expected trade
+frequency, an overfitting-prevention plan, and pre-committed pass/fail
+criteria stated before any code was written:
+
+1. **Asian/London Range Breakout - Continuation** (built and tested,
+   see below) - the deliberate mirror opposite of the already-rejected
+   London Sweep reversal: trade WITH a confirmed Asian-range breakout,
+   not against it.
+2. **London Liquidity Sweep, re-tried with S5-resolution exhaustion
+   filter** - not built. Two prior direct tests of this exact family
+   (V1, V2) already REJECTED it, including a diagnostic that identified
+   the reversal hypothesis itself, not confirmation logic, as the
+   primary failure - re-testing would need a genuinely new angle to be
+   worth the cost, rated weakest of the three candidates for that reason.
+3. **Round-Number Level Consolidation** - not built. A genuinely
+   different, price-level-anchored (not session-time-anchored)
+   mechanism; requires its own cheap statistical pre-check (does
+   volatility actually compress near round numbers vs. an ordinary-time
+   control, same discipline as H2/H3) before any entry logic, which
+   has not yet been run.
+
+### Asian/London Range Breakout - Continuation - REJECTED after development testing
+
+Research question: does London-session order flow tend to EXTEND a
+genuine overnight Asian-session breakout (momentum transfer, new desks
+entering aligned with the move) rather than reject it - the exact
+opposite economic mechanism from V1's already-rejected stop-hunt/
+reversal thesis, not a parameter variation of it?
+
+**Design** (`signals_london_breakout_continuation_m15.py`): reuses V1's
+Asian-range/session-window infrastructure completely unchanged
+(imported, not copied - same 00:00-07:00 Asian session, same
+07:00-10:00 London entry window, both Europe/London local, DST-aware).
+Entry: a CONFIRMED Close beyond the Asian high/low by
+`breakout_buffer_atr_fraction` (0.1xATR, same value as V1's stop
+buffer, reused not retuned) - the breakout itself is the signal, no
+reversal/reject-then-confirm step. Stop: structural, at the OPPOSITE
+side of the Asian range plus a buffer - a deliberately wide, structural
+choice (if price reverses all the way through the far boundary, the
+"range held and flow is continuing" thesis has fully failed, not just
+pulled back). Target: fixed 1:1 R:R, same as V1/V2. One trade per
+instrument per day. Because signal-on-Close/fill-at-next-Open matches
+`backtest_engine.py`'s standard convention exactly, this strategy runs
+through the same unmodified `run_backtest()` every other strategy in
+this project uses - no standalone simulator needed, unlike H4.
+
+15 new tests (`tests/test_london_breakout_continuation_signals.py`) -
+Asian-range no-lookahead reuse, breakout detection incl. buffer
+precision and intrabar-vs-confirmed-close discipline, one-trade-per-day,
+structural stop/target formula incl. R:R scaling, validation/reserved-
+access prevention. Full suite: 74/74 passing (59 pre-existing + 15 new).
+
+**Round 1 result on DEVELOPMENT data (train/test split within
+development, unchanged from every other strategy's methodology)**:
+
+| | Trades | Win rate | PF | Net P&L (USD) |
+|---|---|---|---|---|
+| TRAIN (2020-08-24 to 2023-05-15) | 488 | 47.8% | **0.912** | -$549.73 |
+| TEST (2023-05-15 to 2024-07-14) | 116 | 35.3% | **0.546** | -$818.89 |
+
+TRAIN already fails the 1.2 profit-factor bar; TEST is materially
+*worse*, not a marginal miss around a real edge. Both directions (long
+PF 0.893/0.526, short PF 0.933/0.573 across train/test) lose money in
+both periods; both instruments lose money combined (EUR_USD net
+-$385.62, GBP_USD net -$983.00); TRAIN's PF is stable year-over-year
+(0.907-0.921, 2020-2022) but stably *below* the bar, not above it. The
+strategy's own drawdown-suspension safety limit fired 464 times in
+TRAIN and 363 times in TEST - an independent signal of how badly it was
+losing, not just a narrow P&L miss.
+
+**Verdict against the pre-committed criteria** (PF < 1.2, expectancy
+not significantly positive, inconsistent sign across instruments/years,
+doesn't survive realistic costs): **every criterion triggers.** The
+momentum-transfer continuation hypothesis does not hold - confirmed
+Asian-range breakouts do not extend reliably enough to overcome even a
+1:1 R:R structure, on either instrument, either direction, or any year
+tested. **REJECTED.**
+
+This closes out all three structurally distinct ways of trading the
+Asian/London range boundary tried in this project: reversal (V1,
+REJECTED), trend-filtered reversal (V2, REJECTED), and continuation
+(this candidate, REJECTED).
+
+Full trade-level data:
+`results/london_breakout_continuation_round1_development_trades.csv`.
+Full structured summary:
+`results/london_breakout_continuation_round1_summary.json`. Not
+deleted, per the same decision as V1/V2:
+`signals_london_breakout_continuation_m15.py`,
+`run_london_breakout_continuation_backtest.py`, and their tests remain
+in the repository as a complete, honestly-labeled failed experiment.
+
 ## The strategy
 
 **Markets:** EUR/USD, GBP/USD, USD/JPY, Gold (XAU/USD). Adding another
@@ -1282,6 +1379,8 @@ results ever look unexpectedly off, check the run's output for a
 | `run_london_sweep_backtest.py` | Entry point for V1 - EUR_USD/GBP_USD only, `dataset_split.split_for_iteration()` exclusively |
 | `signals_london_sweep_trend_aligned_m15.py` | V2 - imports V1's sweep+confirmation logic unchanged, adds a daily EMA50/200 trend-alignment gate. **Rejected after development testing** - see "London Liquidity Sweep Reversal V2" above |
 | `run_london_sweep_trend_aligned_backtest.py` | Entry point for V2 - same scope as V1's entry point, plus daily candle data for the trend gate |
+| `signals_london_breakout_continuation_m15.py` | Post-H4 Candidate 2 - reuses V1's Asian-range infrastructure unchanged, trades WITH a confirmed breakout instead of against it (opposite mechanism from V1/V2). **Rejected after development testing** - see "Post-H4 structural search" above |
+| `run_london_breakout_continuation_backtest.py` | Entry point for Candidate 2 - runs through the standard, unmodified `run_backtest()` (unlike H4, this signal's timing matches the engine's own fill convention) |
 | `hypothesis_tests/` | Cheap, pre-registered, single-shot statistical falsification tests for candidate hypotheses - deliberately not strategy code, nothing here is imported by any strategy or the backtest engine. Currently: `leadlag_falsification.py` (H1, rejected), `gap_fade_falsification_round1_24h_hold.py` + `gap_fade_falsification_round2_closure.py` (H2, rejected), `monthend_falsification.py` (H3, rejected), `econ_event_volatility_round1_statistical.py` + `..._spread_resolution_check.py` + `..._round2_breakout_trigger.py` + `..._round3_s5_fetch.py` + `..._round3_s5_simulation.py` + `data/economic_events_development.csv` + `data/economic_events_validation.csv` (H4, REJECTED decisively after round 3's finest-resolution, out-of-sample-confirmed test - `data/s5_cache/` is the large, regenerable, gitignored raw S5 candle cache behind it). See "V3 candidate search" and "Hypothesis 4" above |
 | `results/` | Permanently preserved raw results from concluded experiments (V1/V2 full trade-level data + structured summaries, V3 candidate falsification summaries), so an experiment never needs re-running just to recall what happened |
 | `data_fetch.py` | Paginated OANDA candle fetch (read-only) with local CSV caching + synthetic fallback; supports M5/M15/H1/H4/D granularities |
