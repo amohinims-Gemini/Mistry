@@ -44,9 +44,43 @@ COMMISSION_PER_TRADE = 0.0   # OANDA's standard retail accounts are spread-only,
                              # spread itself, already modeled via realistic bid/ask fills.
 TRAIN_FRACTION = 0.70
 
-MIN_REQUIRED_TRADES = 150
+# --- Standing validation bar, STRENGTHENED after Candidate 2's rejection ---
+# Raised from the original spec's 150 trades / PF > 1.2 to this stricter bar
+# for every strategy round going forward (Candidate 2's own result, PF 0.912
+# train / 0.546 test, already failed the OLD bar decisively - this change
+# doesn't retroactively alter that verdict, it only raises what "passing"
+# means for whatever is tested next). 200 is the enforced floor of the
+# requested 200-300 trade range; 300 is treated as a "comfortable" level
+# worth noting in reports, not a hard additional gate.
+MIN_REQUIRED_TRADES = 200
 MAX_ALLOWED_DRAWDOWN_PCT = 10.0
-MIN_REQUIRED_PROFIT_FACTOR = 1.2
+MIN_REQUIRED_PROFIT_FACTOR = 1.3
+
+# --- Extended standing criteria (new - see evaluate_extended_requirements()
+# below). These need trade-level data the simple train/test metrics dicts
+# don't carry, so they're a separate, additive check - not folded into
+# evaluate_requirements() so every already-written entry-point script that
+# calls evaluate_requirements(train_metrics, test_metrics) unchanged keeps
+# working exactly as before. Any FUTURE strategy's entry point should call
+# BOTH evaluate_requirements() and evaluate_extended_requirements().
+#
+# Every threshold below is a first-pass, explicitly disclosed convention,
+# not something precisely specified - flagged here rather than presented as
+# more authoritative than it is:
+IS_OOS_MAX_RELATIVE_PF_DROP = 0.35      # test PF must not fall more than this
+                                          # fraction below train PF
+MAX_SINGLE_TRADE_PROFIT_SHARE = 0.20    # no single trade may account for more
+                                          # than this fraction of total gross profit
+MAX_SINGLE_MONTH_PROFIT_SHARE = 0.40    # no single calendar month may account for
+                                          # more than this fraction of total net profit
+MIN_POSITIVE_REGIME_YEARS_FRACTION = 0.60  # at least this fraction of calendar
+                                          # years (used as a pragmatic regime
+                                          # proxy - matches the per-year
+                                          # breakdown already used throughout
+                                          # this project's reports, e.g. H4,
+                                          # Candidate 2 - not a sophisticated
+                                          # volatility/trend regime classifier)
+                                          # must be individually net-profitable
 
 
 # =============================================================================
@@ -105,7 +139,7 @@ def compute_metrics(result, starting_cash):
     Performance metrics for one backtest run. 'Completed trades' means
     trades that hit their stop-loss or take-profit naturally - forced
     closes at the end of the data are tracked separately and NOT counted
-    toward the 150-trade requirement or win-rate/profit-factor.
+    toward the MIN_REQUIRED_TRADES requirement or win-rate/profit-factor.
 
     FINANCING IS EXCLUDED from total_return_pct and max_drawdown_pct (the
     two metrics checked against the spec's pass/fail bars) - confirmed in
@@ -192,6 +226,129 @@ def evaluate_requirements(train_metrics, test_metrics):
         v for k, v in checks.items() if k.endswith("_pass")
     )
     return checks
+
+
+def evaluate_extended_requirements(train_result, test_result, train_metrics, test_metrics):
+    """The NEW standing checks (see the constants above), additive to
+    evaluate_requirements() - not folded into it so every already-written
+    entry-point script keeps working unchanged. Any FUTURE strategy's
+    entry point should call this ALONGSIDE evaluate_requirements().
+
+    Needs trade-level data (per-trade P&L, entry_time) that the simple
+    train/test metrics dicts don't carry, so it takes the full backtest
+    result dicts (train_result/test_result, each with a "trades"
+    DataFrame) rather than just the summary metrics.
+    """
+    train_trades = train_result["trades"]
+    test_trades = test_result["trades"]
+    train_completed = train_trades[train_trades["exit_reason"].isin(["stop_loss", "take_profit"])]
+    test_completed = test_trades[test_trades["exit_reason"].isin(["stop_loss", "take_profit"])]
+    combined = pd.concat([train_completed, test_completed], ignore_index=False)
+
+    # --- 1. In-sample vs out-of-sample similarity: both periods must
+    # independently clear the PF bar, AND test PF must not have collapsed
+    # relative to train PF (the Candidate 2 failure mode - train PF 0.912,
+    # test PF 0.546, a >40% relative drop - this check exists specifically
+    # to catch that pattern even if some future case's test PF alone were
+    # to clear MIN_REQUIRED_PROFIT_FACTOR on a small/lucky sample). ---
+    train_pf, test_pf = train_metrics["profit_factor"], test_metrics["profit_factor"]
+    if train_pf > 0 and not (isinstance(train_pf, float) and train_pf == float("inf")):
+        pf_ratio = test_pf / train_pf
+    else:
+        pf_ratio = float("nan")
+    is_oos_similarity_pass = (
+        train_pf > MIN_REQUIRED_PROFIT_FACTOR
+        and test_pf > MIN_REQUIRED_PROFIT_FACTOR
+        and not pd.isna(pf_ratio)
+        and pf_ratio >= (1 - IS_OOS_MAX_RELATIVE_PF_DROP)
+    )
+
+    # --- 2. No single trade dominates the profit ---
+    if len(combined):
+        gross_profit = combined.loc[combined["pnl"] > 0, "pnl"].sum()
+        max_single_trade_pnl = combined["pnl"].max() if len(combined) else 0.0
+        single_trade_share = (max_single_trade_pnl / gross_profit) if gross_profit > 0 else float("nan")
+    else:
+        single_trade_share = float("nan")
+    no_single_trade_dominance_pass = (
+        not pd.isna(single_trade_share) and single_trade_share <= MAX_SINGLE_TRADE_PROFIT_SHARE
+    )
+
+    # --- 3. No single calendar month dominates the profit ---
+    if len(combined):
+        combined_by_month = combined.copy()
+        # tz_localize(None) first: only the calendar month bucket matters here,
+        # and to_period() would otherwise warn about dropping tz info anyway.
+        combined_by_month["month"] = pd.to_datetime(
+            combined_by_month["entry_time"]).dt.tz_localize(None).dt.to_period("M")
+        monthly_pnl = combined_by_month.groupby("month")["pnl"].sum()
+        total_net_pnl = monthly_pnl.sum()
+        max_month_pnl = monthly_pnl.max() if len(monthly_pnl) else 0.0
+        month_share = (max_month_pnl / total_net_pnl) if total_net_pnl > 0 else float("nan")
+    else:
+        month_share = float("nan")
+    no_single_month_dominance_pass = (
+        not pd.isna(month_share) and 0 <= month_share <= MAX_SINGLE_MONTH_PROFIT_SHARE
+    )
+
+    # --- 4. Positive results across more than one market regime, using
+    # calendar year as a pragmatic proxy (same breakdown already used
+    # throughout this project's reports - not a volatility/trend regime
+    # classifier, a documented simplification) ---
+    if len(combined):
+        combined_by_year = combined.copy()
+        combined_by_year["year"] = pd.to_datetime(combined_by_year["entry_time"]).dt.year
+        yearly_pnl = combined_by_year.groupby("year")["pnl"].sum()
+        n_years = len(yearly_pnl)
+        n_positive_years = (yearly_pnl > 0).sum()
+        positive_year_fraction = n_positive_years / n_years if n_years else 0.0
+    else:
+        n_years, n_positive_years, positive_year_fraction = 0, 0, 0.0
+    multi_regime_pass = n_years >= 2 and positive_year_fraction >= MIN_POSITIVE_REGIME_YEARS_FRACTION
+
+    checks = {
+        "is_oos_similarity_pass": is_oos_similarity_pass,
+        "no_single_trade_dominance_pass": no_single_trade_dominance_pass,
+        "no_single_month_dominance_pass": no_single_month_dominance_pass,
+        "multi_regime_pass": multi_regime_pass,
+        "train_pf": train_pf, "test_pf": test_pf, "pf_ratio": pf_ratio,
+        "max_single_trade_profit_share": single_trade_share,
+        "max_single_month_profit_share": month_share,
+        "n_years": n_years, "n_positive_years": n_positive_years,
+        "positive_year_fraction": positive_year_fraction,
+    }
+    checks["all_extended_pass"] = all(
+        v for k, v in checks.items() if k.endswith("_pass")
+    )
+    return checks
+
+
+def print_extended_verdict(checks):
+    print("\n" + "=" * 78)
+    print("EXTENDED standing criteria (adopted after Candidate 2's rejection)")
+    print("=" * 78)
+    print(f"[{'PASS' if checks['is_oos_similarity_pass'] else 'FAIL'}] "
+          f"Train PF ({checks['train_pf']:.3f}) and test PF ({checks['test_pf']:.3f}) both above "
+          f"{MIN_REQUIRED_PROFIT_FACTOR}, test not more than {IS_OOS_MAX_RELATIVE_PF_DROP*100:.0f}% "
+          f"below train (ratio {checks['pf_ratio']:.3f})")
+    share = checks["max_single_trade_profit_share"]
+    print(f"[{'PASS' if checks['no_single_trade_dominance_pass'] else 'FAIL'}] "
+          f"No single trade exceeds {MAX_SINGLE_TRADE_PROFIT_SHARE*100:.0f}% of gross profit "
+          f"({'n/a' if pd.isna(share) else f'{share*100:.1f}%'} observed)")
+    mshare = checks["max_single_month_profit_share"]
+    print(f"[{'PASS' if checks['no_single_month_dominance_pass'] else 'FAIL'}] "
+          f"No single calendar month exceeds {MAX_SINGLE_MONTH_PROFIT_SHARE*100:.0f}% of net profit "
+          f"({'n/a' if pd.isna(mshare) else f'{mshare*100:.1f}%'} observed)")
+    print(f"[{'PASS' if checks['multi_regime_pass'] else 'FAIL'}] "
+          f"At least {MIN_POSITIVE_REGIME_YEARS_FRACTION*100:.0f}% of calendar years "
+          f"individually net-profitable ({checks['n_positive_years']}/{checks['n_years']} years, "
+          f"regime proxy)")
+    print("-" * 78)
+    if checks["all_extended_pass"]:
+        print("Overall: PASSES every extended requirement too.")
+    else:
+        print("Overall: DOES NOT pass every extended requirement.")
+    print("=" * 78)
 
 
 def print_period_report(label, result, metrics):
@@ -305,8 +462,10 @@ def print_comparison_table(experiment_results):
         print(row)
 
     print("=" * 100)
-    print("TrainDD%/TestDD% = max drawdown per period (fails if either >= 10%). TestPF = profit")
-    print("factor on out-of-sample data. Trades = completed trades, train+test combined (need >=150).")
+    print(f"TrainDD%/TestDD% = max drawdown per period (fails if either >= {MAX_ALLOWED_DRAWDOWN_PCT:.0f}%). "
+          f"TestPF = profit")
+    print(f"factor on out-of-sample data. Trades = completed trades, train+test combined "
+          f"(need >={MIN_REQUIRED_TRADES}).")
     print("TestRet% = out-of-sample total return. Trd/OOS+/DD/PF = pass(OK)/fail(X) on each individual")
     print("requirement; ALL = every requirement passing at once.")
 
