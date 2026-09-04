@@ -60,6 +60,57 @@ does NOT remain: a strategy this project would actually recommend
 trading. Read everything below as "the honest record of a real search
 that came up empty," not as a working system.
 
+### Standing validation criteria - STRENGTHENED after Candidate 2
+
+Every strategy through Candidate 2 (17 independently tried structural
+ideas total) was checked against the original spec's bar: 150+
+completed trades, profit factor > 1.2 on out-of-sample data, positive
+OOS return, max drawdown < 10%. Candidate 2 failed that bar decisively
+(train PF 0.912, test PF 0.546) - and after that result, the bar itself
+was raised for any FUTURE strategy round, not applied retroactively to
+change any already-concluded verdict (nothing that already failed the
+easier bar would have passed the stricter one either). The **current**
+standing criteria (`run_backtest.py`):
+
+- **≥200 completed trades** (train+test combined) - up from 150; 300 is
+  treated as a "comfortable" level worth noting in reports, not an
+  additional hard gate.
+- **Profit factor > 1.3** - up from 1.2 - required independently in
+  BOTH train and test, not just out-of-sample.
+- **Positive expectancy after all costs** - unchanged in spirit (every
+  backtest in this project already uses realistic Bid/Ask fills and
+  slippage, never a zero-cost approximation for the pass/fail check
+  itself), now stated as an explicit, named criterion rather than an
+  implicit property of the engine.
+- **In-sample/out-of-sample similarity** (new): test PF must not fall
+  more than 35% below train PF (`IS_OOS_MAX_RELATIVE_PF_DROP`) - added
+  specifically because Candidate 2's failure mode was exactly this: a
+  test period that collapsed relative to train, not just an
+  independently-bad test result.
+- **No single trade or month dominating the result** (new): no single
+  trade may account for more than 20% of gross profit
+  (`MAX_SINGLE_TRADE_PROFIT_SHARE`), no single calendar month more than
+  40% of net profit (`MAX_SINGLE_MONTH_PROFIT_SHARE`) - guards against a
+  strategy that looks profitable only because of one lucky trade or
+  regime.
+- **Positive results across more than one market regime** (new): at
+  least 60% of calendar years present in the combined sample must be
+  individually net-profitable (`MIN_POSITIVE_REGIME_YEARS_FRACTION`),
+  using calendar year as a pragmatic regime proxy - the same per-year
+  breakdown already used throughout this project's reports (H4,
+  Candidate 2), not a sophisticated volatility/trend-regime classifier.
+  Explicitly documented as a first-pass convention, not a precisely
+  derived number.
+
+Implemented as `evaluate_extended_requirements()` /
+`print_extended_verdict()` in `run_backtest.py`, additive to the
+existing `evaluate_requirements()` (whose two thresholds were bumped in
+place) so every already-written entry-point script keeps working
+unchanged - any future strategy's entry point should call both
+functions. Not applied to any of the 17 already-concluded experiments;
+their results and verdicts stand exactly as documented, under the
+criteria that were in effect when they were run.
+
 ### The original 1H strategy, for reference
 
 The ORIGINAL spec strategy (4H trend filter / 1H entry, both described
